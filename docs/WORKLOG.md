@@ -1,5 +1,16 @@
 # Veyra 工作记录
 
+## 2026-09-21 Test-package runtime repair
+
+The manually assembled `1.4.4beta-playback-20260920` package contained the
+new application executable but omitted the FFmpeg runtime DLLs. This caused
+Windows loader error `avformat-63.dll` before the application could start.
+The package was repaired in place from the already verified beta runtime set:
+`avcodec-63.dll`, `avformat-63.dll`, `avutil-61.dll`, `swresample-7.dll`,
+`swscale-10.dll`, `dav1d.dll`, and the MSVC runtime DLLs. `dumpbin /dependents`
+now resolves the five FFmpeg imports from the same directory. No source or
+runtime binary was modified; only the test-package assembly was corrected.
+
 ## 2026-09-20 Capture-start and NR panel follow-up
 
 - Fixed the physical-capture settings transaction that could wait forever for
