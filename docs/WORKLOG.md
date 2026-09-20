@@ -1,5 +1,26 @@
 # Veyra 工作记录
 
+## 2026-09-20 1.4.4beta 本地内测包
+
+在 `codex/capture-color-144beta-20260920` 接入采集卡输入色彩空间与范围选择：
+自动、Rec.2100 PQ、Rec.2100 HLG、Rec.709，以及自动/有限/完整范围。选择编码
+向后兼容旧的 0..2 值；新值在 `CaptureColorOverride.h` 中定义并经过严格校验。
+设置按 DirectShow 设备路径保存，跨格式/帧率切换与重连保留；旧 v1-v3 配置仍可读。
+原生手动 HDR 仅接受 P010/P016，压缩输入拒绝手动覆盖而继续使用码流 VUI，不再静默丢弃
+用户选择。同步包含色相分区和 hue wrap 修复。
+
+Build: `scripts/build-isolated.ps1`，`E:/项目/Veyra/build/color-mixer-hue-20260920`，
+DisplayVersion `1.4.4beta`，目标 `veyra`，exit 0。测试：`veyra_ui_contract_tests`、
+`veyra_capture_color_tests`、`veyra_color_grade_gpu_tests` 均 exit 0；日志在
+`E:/项目/Veyra/logs/capture-color-144beta-20260920/`。独立窗口检查确认颜色/范围控件
+不重叠且包含四个色彩空间、三个范围选项，截图在对应 `tests/.../dialog-window/`。
+
+便携包：`E:/项目/Veyra/test-packages/1.4.4beta/final/Veyra-1.4.4beta-win64-portable.zip`，
+472349725 bytes，SHA256 `2A2C8F37DC1F8E875B834B6072C8E7AF0B5B0052B40FDCF6A48BD72E762DA91B`。
+包内 120 个 payload 文件及 manifest 哈希通过。通用 portable-smoke 的 Video SR 项目在本机
+未通过（`VSR creation or GPU execution missing`，日志显示 `gpuSrP95Ms=0`）；其余基础、NR、
+FG 和 UI/颜色测试通过，不能把该项写成通过。未进行真实 Elgato 实卡验收，未推送或发布 GitHub。
+
 ## 2026-09-20 1.4.3 publication verified
 
 Released https://github.com/Likely7/Veyra-NRVideo/releases/tag/v1.4.3 as Latest,
@@ -5245,3 +5266,30 @@ and leaves the previously verified resize-fix package untouched. Existing
 evidence/build paths are E:/项目/Veyra/tests/resize-hang-20260920 and
 E:/项目/Veyra/build/slider-reset-20260919; no new binary artifacts, runtime
 changes, publication or shutdown.
+# 2026-09-20 Color mixer hue coverage and circular conversion
+
+User reported weak/imprecise per-colour hue adjustments. Inspected the UI,
+CPU response bake and shared ingest shader. Fixed-radius 32-degree masks left
+only 0.01123 weight per adjacent band at the midpoint of a 60-degree gap.
+Hue-only masks now interpolate linearly between neighbouring centres on the
+ring; their weights sum to one. Existing +/-100 -> +/-30-degree centre scale
+is retained. An initial unverified +/-100-degree amplification was withdrawn.
+Saturation, brightness and B&W masks remain unchanged. Old nonzero hue presets
+can look different between band centres because the coverage bug is corrected.
+
+HsvToRgb now wraps shifted hue with frac before sector selection. Previously
+negative red shifts or values above 360 used the wrong sector. Corrected the
+old orange test's settings typo (enabled was assigned to s, not o); restored
+orange dominance coverage instead of accepting the earlier unexplained result.
+
+Build: scripts/build-isolated.ps1, build/color-mixer-hue-20260920, dependency
+cache build/frame-pacing-20260918/CMakeCache.txt, targets veyra,
+veyra_color_grade_tests and veyra_color_grade_gpu_tests, DisplayVersion 1.4.3.
+Build exited 0. CPU tests exited 0. Initial GPU launch failed with missing DLL
+(-1073741515); rerun with the configured patched FFmpeg bin on process PATH
+exited 0, including red +/- hue direction and existing real-graph regressions.
+Tests used run-short-test.ps1 with 60/120-second watchdogs. Logs are under
+E:/项目/Veyra/logs/color-mixer-hue-20260920/{cpu,gpu,gpu-runtime}.*.log;
+build and process-local tmp are under the matching E:/项目/Veyra directories.
+git diff --check passed. No PS/LR visual equivalence or user-image acceptance
+claimed; no packaging, publication, runtime changes or additional GPU pass.

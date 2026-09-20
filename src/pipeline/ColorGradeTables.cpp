@@ -217,15 +217,23 @@ ColorGradeTables ColorGradeTables::bake(const engine::ColorSettings& s){
         float shift=0,sat=1,lum=1,bw=0;
         constexpr float centres[engine::kColorMixerBands]={0,30,60,120,180,240,280,320};
         for(int b=0;b<engine::kColorMixerBands;++b){
-            float d=std::abs(hue-centres[b]);
-            d=std::min(d,360.0f-d);
-            // Half-width 32 degrees with a smoothstep falloff: wide enough for a
-            // colour range, narrow enough that the red band does not drag orange
-            // (skin) along with it. The shader matches these bands against the
-            // display-referred hue, so the centres are the hues users see.
-            const float t=std::max(0.0f,1.0f-d/32.0f);
+            // Use a continuous triangular mask between adjacent hue centres.
+            // The old fixed 32-degree radius left large gaps (for example around
+            // 90/150/210 degrees), so a slider could appear to do nothing for
+            // perfectly valid colours. The ring topology also makes magenta ->
+            // red wrap around without a seam.
+            const int prev=(b+engine::kColorMixerBands-1)%engine::kColorMixerBands;
+            const int next=(b+1)%engine::kColorMixerBands;
+            const float left=centres[b]-centres[prev]+(b==0?360.0f:0.0f);
+            const float right=centres[next]-centres[b]+(next==0?360.0f:0.0f);
+            const float delta=std::remainder(hue-centres[b],360.0f);
+            const float hueWeight=std::max(0.0f,1.0f-std::abs(delta)/(delta<0?left:right));
+            // Preserve the established UI scale: +/-100 is approximately +/-30
+            // degrees at the centre of a band, as in existing saved presets.
+            shift+=hueWeight*s.mixerHue[std::size_t(b)]*0.3f;
+            // Keep existing saturation, brightness and B&W preset responses.
+            const float t=std::max(0.0f,1.0f-std::abs(delta)/32.0f);
             const float w=t*t*(3.0f-2.0f*t);
-            shift+=w*s.mixerHue[std::size_t(b)]*0.3f;
             sat*=1.0f+w*s.mixerSaturation[std::size_t(b)]/100.0f;
             lum*=1.0f+w*s.mixerLuminance[std::size_t(b)]/100.0f;
             // Black & white mixer: per-band lighten/darken of the monochrome

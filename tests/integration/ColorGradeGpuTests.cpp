@@ -143,6 +143,19 @@ Pixel center(const sink::RgbaImage& image){
 }
 }
 int wmain(){
+    {
+        Graph graph;Frame red;
+        bool ready=graph.start(true)&&red.make(200,0,0);
+        for(float amount:{-100.0f,100.0f}){
+            engine::EnhancementSettings settings;settings.color.enabled=true;
+            settings.color.mixerHue[0]=amount;
+            sink::RgbaImage image;
+            const bool rendered=ready&&graph.apply(settings)&&graph.render(red,image)&&!image.pixels.empty();
+            const auto p=rendered?center(image):Pixel{};
+            check(rendered&&p.r>150&&(amount<0?(p.b>60&&p.g<5):(p.g>60&&p.b<5)),
+                  amount<0?"negative red hue wraps towards magenta":"positive red hue moves towards orange");
+        }
+    }
     for(bool rgb:{true,false}){
         Graph graph;Frame frame;
         bool ok=graph.start(true,rgb);

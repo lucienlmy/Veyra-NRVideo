@@ -1,5 +1,6 @@
 #pragma once
 #include "veyra/source/IFrameSource.h"
+#include "veyra/source/CaptureColorOverride.h"
 #include <memory>
 #include <string_view>
 #include <vector>

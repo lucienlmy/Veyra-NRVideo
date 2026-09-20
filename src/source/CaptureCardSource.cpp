@@ -210,13 +210,13 @@ bool parseCapturePath(std::wstring_view path,CaptureSelection& selection){
     if(path.starts_with(prefix)){
         std::array<std::wstring_view,5> fields{};size_t cursor=prefix.size();
         for(size_t i=0;i<fields.size();++i){const size_t end=path.find(L':',cursor);if(i+1<fields.size()){if(end==std::wstring_view::npos)return false;fields[i]=path.substr(cursor,end-cursor);cursor=end+1;}else{if(end!=std::wstring_view::npos)return false;fields[i]=path.substr(cursor);}}
-        if(fields[0].empty()||!decodePath(fields[0],selection.videoPath)||!parseInt(fields[1],selection.format)||!parseInt(fields[2],selection.audio)||!decodePath(fields[3],selection.audioPath)||!parseUnsigned(fields[4],selection.colorOverride)||selection.format<0||selection.colorOverride>2)return false;
+        if(fields[0].empty()||!decodePath(fields[0],selection.videoPath)||!parseInt(fields[1],selection.format)||!parseInt(fields[2],selection.audio)||!decodePath(fields[3],selection.audioPath)||!parseUnsigned(fields[4],selection.colorOverride)||selection.format<0||!validCaptureColorOverride(selection.colorOverride))return false;
         if(selection.audio!=kCaptureAudioDisabled&&selection.audio!=kCaptureAudioFromVideoDevice&&selection.audio!=kCaptureAudioWasapi&&selection.audio<0)return false;
         if((selection.audio>=0||selection.audio==kCaptureAudioWasapi)&&selection.audioPath.empty())return false;selection.stable=true;return true;
     }
     unsigned videoIndex=0,colorOverride=0;int format=0,audio=kCaptureAudioDisabled;const std::wstring legacy(path);
     const int fields=swscanf_s(legacy.c_str(),L"capture:%u:%d:%d:%u",&videoIndex,&format,&audio,&colorOverride);
-    if(fields<3||format<0||audio<kCaptureAudioFromVideoDevice||colorOverride>2)return false;
+    if(fields<3||format<0||audio<kCaptureAudioFromVideoDevice||!validCaptureColorOverride(colorOverride))return false;
     selection.videoIndex=videoIndex;selection.format=format;selection.audio=audio;selection.colorOverride=fields>=4?colorOverride:0;return true;
 }
 }
@@ -471,7 +471,7 @@ std::vector<CaptureDevice> CaptureCardSource::deviceDetails(bool audio){
 }
 std::vector<std::wstring> CaptureCardSource::devices(bool audio){std::vector<std::wstring> result;for(auto& device:deviceDetails(audio))result.push_back(std::move(device.name));return result;}
 std::wstring CaptureCardSource::makeCapturePath(unsigned videoIndex,const CaptureDevice& video,int format,int audioMode,const CaptureDevice* audio,unsigned colorOverride,double requestedFps){
-    if(!validCaptureFrameRate(requestedFps))return {};
+    if(!validCaptureFrameRate(requestedFps)||!validCaptureColorOverride(colorOverride))return {};
     const auto suffix=requestedFps>0?std::format(L"?fps={:.6f}",requestedFps):L"";
     if(audio&&audio->wasapi){
         if(video.path.empty()||audio->path.empty())return {};
@@ -693,13 +693,13 @@ bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.cle
     if(p.cpuUnpack&&captureLegacyCpuLayout(p.layout))log::warn("capture-unpack",std::format("legacy CPU unpack path active packing={} format={} (per-pixel conversion stays on the callback thread)",int(p.layout.packing),int(p.layout.format)));
     const unsigned colorOverride=selection.colorOverride;
     log::info("capture-color",std::format("driver controlFlags=0x{:08X} colorInfoPresent={} transfer={} matrix={} primaries={} chroma={} override={}",p.layout.colorControlFlags,bool(p.layout.colorControlFlags&AMCONTROL_COLORINFO_PRESENT),int(p.layout.color.transfer),int(p.layout.color.matrix),int(p.layout.color.primaries),int(p.layout.color.chromaLocation),colorOverride));
-    if(colorOverride>2)return false;
-    if(colorOverride&&!compressedPath){
-        if(p.layout.format!=AV_PIX_FMT_P010&&p.layout.format!=AV_PIX_FMT_P016){log::error("capture-color","Explicit HDR requires P010/P016; select a 10/16-bit capture format");return false;}
-        p.layout.color.transfer=colorOverride==1?pipeline::TransferFunction::PQ:pipeline::TransferFunction::HLG;
-        p.layout.color.matrix=pipeline::YuvMatrix::BT2020NCL;p.layout.color.primaries=pipeline::ColorPrimaries::BT2020;
-        p.layout.color.transferAssumed=p.layout.color.matrixAssumed=p.layout.color.primariesAssumed=false;
-        log::info("capture-color",std::format("manual override={} BT2020; range retains negotiated metadata",colorOverride==1?"PQ":"HLG"));
+    if(!validCaptureColorOverride(colorOverride))return false;
+    if(colorOverride){
+        if(compressedPath){error_=L"压缩采集使用码流颜色信息；手动颜色和范围请选择原生采集格式。";log::error("capture-color","Manual color override requires raw capture; compressed override is not silently ignored");return false;}
+        const auto space=captureColorSpace(colorOverride);
+        if((space==1||space==2)&&p.layout.format!=AV_PIX_FMT_P010&&p.layout.format!=AV_PIX_FMT_P016){error_=L"手动 HDR 需要 P010/P016 格式；SDR 信号请选择自动或 Rec.709。";log::error("capture-color","Explicit HDR requires P010/P016");return false;}
+        applyCaptureColorOverride(p.layout.color,colorOverride);
+        log::info("capture-color",std::format("manual space={} range={} effective transfer={} matrix={} primaries={} range={} (0=auto, space 1=PQ 2=HLG 3=709, range 1=limited 2=full)",space,captureColorRange(colorOverride),int(p.layout.color.transfer),int(p.layout.color.matrix),int(p.layout.color.primaries),int(p.layout.color.range)));
     }
     p.info={};p.info.kind=pipeline::SourceKind::CaptureCard;p.info.width=p.layout.width;p.info.height=p.layout.height;p.info.averageFps=p.layout.duration>0?1e7/p.layout.duration:0;p.info.duration=pipeline::Rational::unknown();p.info.color=p.layout.color;
     if(selection.requestedFps>0){

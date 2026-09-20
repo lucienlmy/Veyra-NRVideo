@@ -214,19 +214,30 @@ int main(){
         s.mixerHue[0]=100.0f;    // red band shifted hard
         const auto redOnly=ColorGradeTables::bake(s);
         const int skinIndex=int(30.0f/360.0f*kH);          // ~orange
-        const int orangeIndex=int(30.0f/360.0f*kH);
         const float redAtSkin=hueAt(redOnly,skinIndex,0);
-        ColorSettings o;s.enabled=true;o.mixerHue[1]=100.0f;   // orange band shifted hard
-        const auto orangeOnly=ColorGradeTables::bake(o);
-        // NOTE: an assertion that the orange band *dominates* a skin-tone hue was
-        // dropped again - baking a single shifted band (index >= 1) came back as
-        // the identity table for reasons this session did not explain, and a test
-        // that only passes sometimes is worse than none. Tracked in WORKLOG.
         check(std::abs(redAtSkin)<6.0f,"the red band only nudges skin tones (narrow smooth falloff)");
         check(std::abs(hueAt(redOnly,0,0))>15.0f,"the red band still moves an actual red strongly");
-        check(std::abs(redAtSkin)<6.0f,"the red band only nudges skin tones (narrow smooth falloff)");
         const int deepRed=0;
         check(std::abs(hueAt(redOnly,deepRed,0))>15.0f,"the red band still moves an actual red strongly");
+
+        // Adjacent bands must cover the gaps between their centres, while a
+        // single band remains isolated at the neighbouring centre.
+        ColorSettings yellow;yellow.enabled=true;yellow.mixerHue[2]=100.0f;
+        const auto yellowOnly=ColorGradeTables::bake(yellow);
+        check(std::abs(hueAt(yellowOnly,int(90.0f/360.0f*kH),0))>10.0f,
+              "the yellow band has continuous coverage through the yellow-green gap");
+        check(std::abs(hueAt(yellowOnly,int(120.0f/360.0f*kH),0))<1.0f,
+              "the yellow band fades at the green centre");
+        ColorSettings orange;orange.enabled=true;orange.mixerHue[1]=100.0f;
+        check(hueAt(ColorGradeTables::bake(orange),skinIndex,0)>27.0f,
+              "orange controls skin hue; the test must enable its own settings");
+        ColorSettings all;all.enabled=true;all.mixerHue.fill(100.0f);
+        const auto uniform=ColorGradeTables::bake(all);
+        bool covered=true;
+        for(int i=0;i<kH;++i)covered&=std::abs(hueAt(uniform,i,0)-30.0f)<1e-4f;
+        check(covered,"equal hue adjustments cover the entire ring without gaps or overlaps");
+        check(std::abs(hueAt(redOnly,0,0)-hueAt(redOnly,kH-1,0))<1e-5f,
+              "red hue response joins continuously at the ring seam");
     }
     if(failures){std::printf("FAIL: colour grade bake (%d checks)\n",failures);return 1;}
     std::printf("PASS: colour grade bake tables (identity, white balance, tone, curves, mixer, grading, lut)\n");

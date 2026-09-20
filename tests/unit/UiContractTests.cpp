@@ -66,6 +66,19 @@ int wmain(int argc,wchar_t** argv){try{
         const auto restored=store.load();require(restored.videoPath==p.videoPath&&restored.formatKey==p.formatKey&&restored.audioPath==p.audioPath&&restored.audioMode==p.audioMode&&restored.colorOverride==p.colorOverride,"capture stable identifiers and Unicode round trip");
         for(double fps:{0.0,29.97,30.0,40.0,50.0,60.0}){p.requestedFps=fps;require(store.save(p)&&store.load().requestedFps==fps,"device capture rate survives restart");}
         p.requestedFps=-1;require(!store.save(p),"invalid capture rate not persisted");
+        p.requestedFps=0;p.colorOverride=5;p.deviceColors={{L"card-A",5},{L"card-B",10}};
+        require(store.save(p),"per-device capture color save");
+        const auto profiles=store.load();
+        require(profiles.colorForDevice(L"card-A")==5&&profiles.colorForDevice(L"card-B")==10&&profiles.colorForDevice(L"new-card")==0,"independent device PQ limited and HLG full survive restart");
+        p.colorOverride=12;require(!store.save(p),"invalid packed color rejected");
+        for(unsigned space=0;space<4;++space)for(unsigned range=0;range<3;++range){
+            const unsigned packed=source::captureColorOverride(space,range);
+            pipeline::ColorDescription color; color.range=pipeline::ColorRange::Full;
+            source::applyCaptureColorOverride(color,packed);
+            require(source::validCaptureColorOverride(packed)&&source::captureColorSpace(packed)==space&&source::captureColorRange(packed)==range,"capture color encoding round trip");
+            require(color.range==(range==1?pipeline::ColorRange::Limited:pipeline::ColorRange::Full),"range auto preserves metadata, manual wins");
+            if(space)require(color.transfer==(space==1?pipeline::TransferFunction::PQ:space==2?pipeline::TransferFunction::HLG:pipeline::TransferFunction::BT709)&&!color.transferAssumed&&!color.matrixAssumed&&color.preserveSdrCodeValues==(space==3),"manual color transfer and SDR preservation contract");
+        }
         for(int version:{1,2}){
             std::wstring legacy=L"VEYRA_CAPTURE "+std::to_wstring(version)+L"\n\"video\" \"format\" -1 \"\" 0"+(version==2?L" 1":L"")+L"\n";
             {std::ofstream file(std::filesystem::path(argv[1])/"capture-preferences.v1",std::ios::binary|std::ios::trunc);file.write(reinterpret_cast<const char*>(legacy.data()),std::streamsize(legacy.size()*sizeof(wchar_t)));}
