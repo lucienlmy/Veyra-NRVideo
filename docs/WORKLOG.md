@@ -17,9 +17,14 @@ DisplayVersion `1.4.4beta`，目标 `veyra`，exit 0。测试：`veyra_ui_contra
 
 便携包：`E:/项目/Veyra/test-packages/1.4.4beta/final/Veyra-1.4.4beta-win64-portable.zip`，
 472349725 bytes，SHA256 `2A2C8F37DC1F8E875B834B6072C8E7AF0B5B0052B40FDCF6A48BD72E762DA91B`。
-包内 120 个 payload 文件及 manifest 哈希通过。通用 portable-smoke 的 Video SR 项目在本机
-未通过（`VSR creation or GPU execution missing`，日志显示 `gpuSrP95Ms=0`）；其余基础、NR、
-FG 和 UI/颜色测试通过，不能把该项写成通过。未进行真实 Elgato 实卡验收，未推送或发布 GitHub。
+包内 120 个 payload 文件及 manifest 哈希通过。首次 portable-smoke 使用 4K 的 p001.mp4，
+Video SR 项未通过（`VSR creation or GPU execution missing`，`gpuSrP95Ms=0`），源与输出
+同为 4K，没有触发放大。保持原断言，改用 `tests/1.4.2beta/visible-scene.mkv` 重跑七项
+均通过，exit 0；证据在 `E:/项目/Veyra/tests/capture-color-144beta-20260920/portable-upscale/result.json`。
+对应源码使用 `scripts/package-release-source.py --version 1.4.4` 生成到同一 final 目录，
+依赖源码取自 `C:/veyra-releases/1.4.1` 并核验固定哈希；临时目录为本任务 tmp/source。
+清理首次打包失败的外层 EXE 副本，保留 final 包、当前构建与验证记录。
+未进行真实 Elgato 实卡验收，未推送或发布 GitHub。
 
 ## 2026-09-20 1.4.3 publication verified
 
