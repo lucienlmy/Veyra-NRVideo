@@ -2,6 +2,27 @@
 
 ## 2026-09-20 Playback/NR implementation slice
 
+Follow-up implementation on the same isolated branch:
+
+- Added a separate `nr-presets.v1` store and page-0 controls for named NR
+  presets (save/replace, apply, delete). Applying a preset copies only the NR
+  model, residual, exclusion regions and temporal-stabilization flag; it does
+  not overwrite SR, FG, pacing, colour, audio or capture settings.
+- XeFG now receives a bounded interval between accepted presents as its
+  `frameRenderTime` hint. The first/reset frame remains zero; the value is
+  clamped to 0.25–100 ms and never sleeps or queues an extra frame. This is an
+  evidence-backed timing difference from the inspected Magpie route, but still
+  needs a real XeSS A/B on the affected GPU before calling the jelly symptom
+  solved.
+- Dolby Vision P5/RPU reconstruction was explicitly deferred by the user;
+  no decoder or colour-route changes were made.
+
+The application and preset-test targets were rebuilt after these changes. The
+existing preset regression executable currently reports a failure in its
+aggregate line even though the standalone settings validation is valid; this
+needs separate cleanup before treating the full preset suite as green. No
+hardware XeSS/RTX or Dolby test was performed.
+
 On isolated branch `codex/playback-nr-20260920` from checkpoint commit
 `ed00218`, implemented the authorized first slice from
 `docs/PLAYBACK_SIX_ISSUE_AUDIT_PLAN_2026-09-20.md`:

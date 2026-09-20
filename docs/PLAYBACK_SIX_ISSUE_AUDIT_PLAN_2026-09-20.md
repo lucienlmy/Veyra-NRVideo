@@ -221,10 +221,20 @@ contains the first reversible slice:
   integration adapted from Magpie's open motion route, not a claim of
   source-identical behavior. It is not enabled by default and has no real RTX
   image-quality acceptance yet.
+- NR now also has a separate named preset file (`nr-presets.v1`). Save/apply/
+  delete are exposed beside the model controls. Applying a preset copies only
+  model, residual, exclusion-zone and temporal-NR fields, so it cannot silently
+  change SR, FG, pacing, colour, audio or capture options.
+- XeFG now receives a bounded accepted-present interval as `frameRenderTime`
+  (zero on first/reset frame), matching the timing shape observed in the
+  inspected Magpie route. It is a hint only: no sleep, queue growth or fixed
+  latency cushion was added. This is an implementation change, but the jelly
+  symptom still requires an affected-GPU A/B capture before it can be called
+  solved.
 
-Not implemented in this slice: Dolby Vision P5/RPU reconstruction and a proven
-XeSS jelly reduction. The current code already supports compatible DV base-layer
-routes; P5 requires the separate metadata/color reconstruction project above.
-XeSS remains at the controlled-A/B stage because changing sharpening or flow
-without evidence would risk worsening the 30/40/50-series paths. No runtime DLL
-was replaced or added.
+Deferred by explicit user decision: Dolby Vision P5/RPU reconstruction. The
+current code still supports only the already-audited compatible base-layer
+routes; no decoder or colour conversion was changed. XeSS remains at the
+controlled-A/B stage for the visual jelly symptom: timing input is improved,
+but sharpening/flow defaults were not changed without a real affected-GPU
+comparison. No runtime DLL was replaced or added.

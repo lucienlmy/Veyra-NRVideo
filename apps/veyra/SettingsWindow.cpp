@@ -23,7 +23,9 @@ HWND window=nullptr,body=nullptr;engine::EngineController* controller=nullptr;HF
 std::function<bool(engine::EnhancementSettings)> apply;
 // Filled by AppShell: settings messages are shown in the player's bottom bar.
 std::function<void(const std::wstring&)> statusSink;
-engine::PresetStore store(runtime::localDataDirectory()/"user-presets.v1");bool loaded=false,dirty=false,populating=false,enhancementEnabled=true;int page=0,scroll=0,contentHeight=0;uint64_t displayedRevision=0;engine::EnhancementSettings configuredSettings;
+engine::PresetStore store(runtime::localDataDirectory()/"user-presets.v1");
+engine::PresetStore nrPresetStore(runtime::localDataDirectory()/"nr-presets.v1");
+bool loaded=false,nrPresetsLoaded=false,dirty=false,populating=false,enhancementEnabled=true;int page=0,scroll=0,contentHeight=0;uint64_t displayedRevision=0;engine::EnhancementSettings configuredSettings;
 std::wstring displayedBackendWarning;
 engine::EnhancementSettings displayedSettings;
 bool smoothMotionHelpExpanded=false;
@@ -69,6 +71,37 @@ LRESULT CALLBACK bodyProc(HWND h,UINT msg,WPARAM wp,LPARAM lp){
 
 const wchar_t* labels[]={L"模型强度",L"局部明暗",L"局部结构",L"肤质 · 未证实",L"风格 · 实验",L"自动遮罩 · 实验",L"UI修正 · 未证实",L"总变化强度",L"暗化变化",L"亮化变化",L"色彩变化",L"明度变化"};
 void loadStore(){if(!loaded){store.load();loaded=true;}}
+void loadNrPresetStore(){if(!nrPresetsLoaded){nrPresetStore.load();nrPresetsLoaded=true;}}
+
+// NR presets intentionally live in their own file. Applying one only copies
+// the NR model/residual/protection/time-domain fields; SR, FG, pacing, audio,
+// colour and capture settings remain untouched. This makes a named NR look
+// safe to try while preserving the generic full-settings preset format.
+void refreshNrPresets(const std::wstring& select={}){
+    loadNrPresetStore();
+    const auto combo=item(260);
+    if(!combo)return;
+    SendMessageW(combo,CB_RESETCONTENT,0,0);
+    SendMessageW(combo,CB_ADDSTRING,0,LPARAM(L"（未选择 NR 预设）"));
+    int selection=0;
+    for(const auto& preset:nrPresetStore.entries()){
+        SendMessageW(combo,CB_ADDSTRING,0,LPARAM(preset.name.c_str()));
+        if(!select.empty()&&preset.name==select)selection=int(SendMessageW(combo,CB_GETCOUNT,0,0))-1;
+    }
+    SendMessageW(combo,CB_SETCURSEL,WPARAM(selection),0);
+}
+engine::EnhancementSettings nrPresetSettings(const engine::EnhancementSettings& current){
+    auto s=current;
+    s.nr=true;
+    return s;
+}
+void applyNrPresetFields(engine::EnhancementSettings& target,const engine::EnhancementSettings& preset){
+    target.nr=preset.nr;
+    target.model=preset.model;
+    target.residual=preset.residual;
+    target.protection=preset.protection;
+    target.nrTemporal=preset.nrTemporal;
+}
 // ---------------------------------------------------------------------------
 // Colour page (plan v4). Sections collapse like an accordion; the rows are laid
 // out sequentially in layoutColorPage() so a collapsed section simply skips its
@@ -1441,6 +1474,19 @@ case WM_CREATE:{window=h;font=makeFont(h);items.clear();displayedBackendWarning.
     SendMessageW(featherSlider,TBM_SETRANGE,TRUE,MAKELPARAM(0,64));
     SendMessageW(featherSlider,TBM_SETPOS,TRUE,12);
     SetPropW(item(222),L"veyra.tip",HANDLE(L"剔除区边缘的过渡宽度，单位是工作分辨率像素。0 就是硬边；4K 上 12 px 约等于画面高度的 0.5%，越大边缘越柔和。"));
+    // Named NR looks are deliberately separate from the generic user preset
+    // file. They are selectable, named and removable, but applying one only
+    // changes the NR-related fields (see settingsCommand below).
+    int nrPresetTop=0;for(const auto& entry:items)if(entry.page==0)nrPresetTop=std::max(nrPresetTop,entry.y+entry.height);
+    nrPresetTop+=20;
+    add(L"STATIC",L"NR 命名预设",1124,0,0,12,nrPresetTop,-1,24);
+    combo(260,0,nrPresetTop+30,{});
+    add(L"EDIT",L"",261,ES_AUTOHSCROLL|WS_TABSTOP,0,202,nrPresetTop+30,170,28);send(261,EM_SETLIMITTEXT,48,0);
+    button(L"保存 NR",262,0,12,nrPresetTop+66,112);
+    button(L"应用",263,0,132,nrPresetTop+66,92);
+    button(L"删除",264,0,232,nrPresetTop+66,92);
+    SetPropW(item(260),L"veyra.tip",HANDLE(L"只保存 NR 模型、残差、剔除区和时间域防闪烁；应用时不会改动超分、补帧、调色或音频。"));
+    SetPropW(item(261),L"veyra.tip",HANDLE(L"输入名称后点击“保存 NR”；同名会覆盖，最多 48 个字符。"));
     for(const auto& entry:items)if(auto help=settingHelp(GetDlgCtrlID(entry.h)))SetPropW(entry.h,L"veyra.tip",HANDLE(help));
     int hdrTop=0;for(const auto& entry:items)if(entry.page==0)hdrTop=std::max(hdrTop,entry.y+entry.height);
     hdrTop+=24;
@@ -1456,7 +1502,7 @@ case WM_CREATE:{window=h;font=makeFont(h);items.clear();displayedBackendWarning.
         SendMessageW(slider,TBM_SETRANGE,TRUE,MAKELPARAM(hdrMin[i],hdrMax[i]));
     }
     createRowResets();
-    loadStore();populate(controller->snapshot().desired);message(store.error());SetTimer(h,1,250,nullptr);arrange();
+    loadStore();loadNrPresetStore();populate(controller->snapshot().desired);refreshNrPresets();message(store.error().empty()?nrPresetStore.error():store.error());SetTimer(h,1,250,nullptr);arrange();
     // Layout evidence for UI work: VEYRA_DUMP_SETTINGS_LAYOUT=1 prints the
     // resolved position of every control once, in DIP units.
     if(GetEnvironmentVariableW(L"VEYRA_DUMP_SETTINGS_LAYOUT",nullptr,0))
@@ -1479,6 +1525,34 @@ __declspec(noinline) LRESULT settingsCommand(HWND h,UINT msg,WPARAM wp,LPARAM lp
             populate(enhancementEnabled?controller->snapshot().desired:configuredSettings);
             return 0;
         }
+    }
+    if(msg==WM_COMMAND&&!populating&&HIWORD(wp)==BN_CLICKED&&LOWORD(wp)>=262&&LOWORD(wp)<=264){
+        loadNrPresetStore();
+        const int id=LOWORD(wp);
+        const int selected=int(SendMessageW(item(260),CB_GETCURSEL,0,0));
+        if(id==262){
+            wchar_t name[64]{};GetWindowTextW(item(261),name,64);
+            if(std::wstring(name).find_first_not_of(L" \t\r\n")==std::wstring::npos){
+                SetFocus(item(261));message(L"请输入 NR 预设名称，再点击保存。");return 0;
+            }
+            const auto current=enhancementEnabled?controller->snapshot().desired:configuredSettings;
+            if(nrPresetStore.put(name,nrPresetSettings(current),true)){
+                refreshNrPresets(name);message(L"已保存 NR 预设："+std::wstring(name));
+                veyra::log::info("nr-preset","saved named NR preset");
+            }else message(L"保存 NR 预设失败："+nrPresetStore.error());
+        }else if(id==263){
+            if(selected<=0||size_t(selected-1)>=nrPresetStore.entries().size()){message(L"先在列表里选择一个 NR 预设。");return 0;}
+            const auto current=enhancementEnabled?controller->snapshot().desired:configuredSettings;
+            auto next=current;applyNrPresetFields(next,nrPresetStore.entries()[size_t(selected-1)].settings);
+            if(submit(next)){populate(enhancementEnabled?controller->snapshot().desired:configuredSettings);message(L"已应用 NR 预设（不改超分、补帧、调色和音频）。");}
+            else message(L"NR 预设应用失败：当前设置正在切换。");
+        }else{
+            if(selected<=0||size_t(selected-1)>=nrPresetStore.entries().size()){message(L"先在列表里选择要删除的 NR 预设。");return 0;}
+            const auto name=nrPresetStore.entries()[size_t(selected-1)].name;
+            if(nrPresetStore.erase(size_t(selected-1))){refreshNrPresets();message(L"已删除 NR 预设："+name);}
+            else message(L"删除 NR 预设失败："+nrPresetStore.error());
+        }
+        return 0;
     }
     if(msg==WM_COMMAND&&!populating&&((LOWORD(wp)==240&&HIWORD(wp)==BN_CLICKED)||((LOWORD(wp)==241||LOWORD(wp)==242||LOWORD(wp)==243)&&HIWORD(wp)==CBN_SELCHANGE)|| (LOWORD(wp)==244&&HIWORD(wp)==EN_KILLFOCUS))){
         auto setting=controller->snapshot().presentation;setting.enabled=checked(240)==BST_CHECKED;
