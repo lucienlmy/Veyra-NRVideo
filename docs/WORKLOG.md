@@ -23,7 +23,9 @@ Video SR 项未通过（`VSR creation or GPU execution missing`，`gpuSrP95Ms=0`
 均通过，exit 0；证据在 `E:/项目/Veyra/tests/capture-color-144beta-20260920/portable-upscale/result.json`。
 对应源码使用 `scripts/package-release-source.py --version 1.4.4` 生成到同一 final 目录，
 依赖源码取自 `C:/veyra-releases/1.4.1` 并核验固定哈希；临时目录为本任务 tmp/source。
-清理首次打包失败的外层 EXE 副本，保留 final 包、当前构建与验证记录。
+源码包生成成功：commit `7618072`，861 个文件核验通过，215045666 bytes，
+SHA256 `84211C78E15822DC6EFB96E6692B2ECB422827AAA271654BF1FF5D4901261472`。
+首次打包失败的外层 EXE 副本清理被自动审批策略拦截，仍保留；final 为唯一交付目录。
 未进行真实 Elgato 实卡验收，未推送或发布 GitHub。
 
 ## 2026-09-20 1.4.3 publication verified
