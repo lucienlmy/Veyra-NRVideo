@@ -231,6 +231,8 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
     int64_t nominalDuration100ns=0;pipeline::Rational pendingDuration=pipeline::Rational::unknown();
     uint64_t received=0,dropped=0,lastDrop=0,sequence=0;
     uint64_t discontinuitySamples=0;
+    CaptureDriverDiscontinuity driverDiscontinuity;
+    uint64_t suppressedDriverDiscontinuities=0;
     Clock::time_point pendingArrival{},readArrival{},firstArrival{},latestArrival{};
     std::deque<Clock::time_point> recentArrivals;
     ComPtr<IGraphBuilder> graph;ComPtr<ICaptureGraphBuilder2> builder;ComPtr<IBaseFilter> device,grabFilter,nullFilter,audioFilter;ComPtr<IAMStreamConfig> config;ComPtr<ISampleGrabber> grab;ComPtr<IMediaControl> control;ComPtr<IMediaEvent> events;
@@ -398,7 +400,14 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
             else {
                 const double previous=compressedPath?lastCallbackTime:pendingTime;
                 if(received){arrivalDeltaMs=std::chrono::duration<double,std::milli>(arrival-latestArrival).count();ptsDeltaMs=(time-previous)*1000;}
-                const bool driverBreak=sample->IsDiscontinuity()==S_OK;
+                const bool driverFlag=sample->IsDiscontinuity()==S_OK;
+                const bool driverBreak=driverDiscontinuity.observe(driverFlag,!compressedPath,
+                    sampleTime&&sampleEnd>sampleStart,received>0,time-previous,arrivalDeltaMs/1000,info.averageFps);
+                if(driverFlag&&!driverBreak){
+                    ++suppressedDriverDiscontinuities;
+                    if(suppressedDriverDiscontinuities==1||suppressedDriverDiscontinuities%600==0)
+                        log::warn("capture-driver-flag",std::format("suppressed={} persistent raw-video discontinuity flag with continuous timestamps; ptsDeltaMs={:.4f} arrivalDeltaMs={:.4f}",suppressedDriverDiscontinuities,ptsDeltaMs,arrivalDeltaMs));
+                }
                 // Interframe packet PTS may move backwards in decode order.
                 // Apply cadence checks to decoded output, not B-frame packets.
                 const bool clockBreak=received&&(!compressedPath||codec==CaptureCodec::Mjpeg)&&
@@ -1242,5 +1251,6 @@ void CaptureCardSource::close()noexcept{
     p.info={};
     p.sequence=p.received=p.dropped=p.lastDrop=0;p.pending=p.callbackError=p.configured=p.forceDiscontinuity=false;p.lastPts=p.readAgeMs=0;
     p.recentArrivals.clear();
+    p.driverDiscontinuity.reset();p.suppressedDriverDiscontinuities=p.discontinuitySamples=0;
 }
 }

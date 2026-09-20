@@ -32,6 +32,29 @@ int main(){
     check(rate.rate(10000000)==1000,"completion rate has no 60 or 120fps cap");
     using veyra::source::captureDuration;using veyra::engine::liveSourceInterval100ns;
     using veyra::source::captureDiscontinuity;
+    veyra::source::CaptureDriverDiscontinuity driverFlag;
+    auto flag=[&](bool flagged=true,bool native=true,bool timed=true,double pts=1.0/60,double arrival=1.0/60){
+        return driverFlag.observe(flagged,native,timed,true,pts,arrival,60);
+    };
+    check(flag()&&flag()&&!flag(),"persistent native flag requires three continuous timestamp pairs");
+    bool stable=true;for(int i=0;i<10000;++i)stable&=!flag();
+    check(stable,"persistent flag cannot keep frame generation in warmup");
+    check(flag(true,true,true,-.01),"backward time preserves flagged reset");
+    check(flag()&&flag()&&!flag(),"clock break requires new continuity evidence");
+    check(flag(true,true,true,.1),"missing source frames preserve flagged reset");
+    check(flag(true,true,true,1.0/60,.2),"arrival stall preserves flagged reset even with smooth PTS");
+    check(flag(true,true,false),"missing sample timestamps preserve driver reset");
+    stable=true;for(int i=0;i<20;++i)stable&=flag(true,false);
+    check(stable,"compressed reference chains never suppress driver discontinuity");
+    check(!flag(false)&&flag(),"isolated flag after unflagged sample always resets");
+    driverFlag.reset();check(flag(),"reconnect clears persistent flag evidence");
+    driverFlag.reset();
+    check(driverFlag.observe(true,true,true,false,0,0,60),"first sample keeps its discontinuity");
+    check(flag(true,true,true,.0164827,.0164222)&&
+          flag(true,true,true,.0171206,.0172319)&&
+          !flag(true,true,true,.0165042,.0164009),"user log initial callback cadence exits repeated reset");
+    check(captureDiscontinuity(true,true,flag(),true,1,1+1.0/60,60),"filter cannot erase an unconsumed mailbox boundary");
+    check(!captureDiscontinuity(false,true,flag(),true,1,1+1.0/60,60),"after boundary delivery continuous flagged frames can form a pair");
     check(!captureDiscontinuity(true,false,false,true,1,1+1.0/60,60),"continuous callbacks remain continuous while mailbox is overwritten");
     check(captureDiscontinuity(true,true,false,true,1,1+1.0/60,60),"driver discontinuity survives mailbox overwrite");
     check(!captureDiscontinuity(false,true,false,true,1,1+1.0/60,60),"consumed driver discontinuity does not leak to next packet");

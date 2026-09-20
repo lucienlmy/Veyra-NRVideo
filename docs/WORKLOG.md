@@ -1,5 +1,45 @@
 # Veyra 工作记录
 
+## 2026-09-20 Six playback/NR requests: investigation only
+
+User requested investigation and proposals, explicitly no implementation.
+Recorded evidence, uncertainties, proposed changes and acceptance criteria in
+`docs/PLAYBACK_SIX_ISSUE_AUDIT_PLAN_2026-09-20.md`: output FPS cap, subtitle
+size changes, fullscreen lock/HDR overlays, Dolby Vision compatibility, XeSS
+warping comparison and NR styles/temporal stabilization.
+
+Read-only source/config inspection of `C:/Users/123/Desktop/033`; no package
+executable, injection script, addon or runtime loaded. Inspected Magpie GPLv3
+experimental revision `3841698348bfb246623d4acf791984c8b68a577b`, downloaded to
+`E:/项目/Veyra/downloads/magpie-six-issue-audit-20260920`. Commands included
+git clone/revision inspection, rg/Get-Content source searches and an upstream
+libplacebo colorspace header read. No source port, application build, package,
+hardware test or release. Only this plan and WORKLOG changed for this request;
+pre-existing capture discontinuity changes remain untouched. Validation:
+`git diff --check` and `git status --short`/diff inspection for documentation.
+
+## 2026-09-20 Native capture persistent discontinuity
+
+User confirmed the previous MK.2 HDR repair now has correct colors on the
+affected setup. This is user device feedback, not universal device validation.
+
+New user log `C:/Users/123/Desktop/veyra-app.log` shows continuous native YUY2
+timestamps but a discontinuity flag on every sample; FG stays in warmup.
+Checkpoint `checkpoint/pre-capture-sticky-discontinuity-20260920` at be3e2e6.
+Added a narrowly scoped persistent-flag filter in CaptureTiming.h, integrated
+callback/close in CaptureCardSource.cpp, and expanded LivePresentationTimingTests.
+Details and limitations: `docs/CAPTURE_STICKY_DISCONTINUITY_2026-09-20.md`.
+
+Validation: `scripts/build-isolated.ps1 -Root . -BuildDirectory
+E:/项目/Veyra/build/color-mixer-hue-20260920 -DependencyCache
+E:/项目/Veyra/build/frame-pacing-20260918/CMakeCache.txt -TempDirectory
+E:/项目/Veyra/tmp/capture-timeline-20260920 -Targets veyra,veyra_live_timing_tests
+-DisplayVersion 1.4.4beta`; application and regression executable build passed.
+Ran `veyra_live_timing_tests.exe`, exit 0; `git diff --check` passed.
+Logs: `E:/项目/Veyra/logs/capture-timeline-20260920/{build,timing-tests}.txt`.
+Build has existing compiler warnings. No affected capture hardware test, no
+package, no upload; SDK/runtime identities unchanged and none added to Git.
+
 ## 2026-09-20 Elgato MK.2 vendor HDR control
 
 Investigated user log veyra-app(30).log and Nitlink; official Elgato support
