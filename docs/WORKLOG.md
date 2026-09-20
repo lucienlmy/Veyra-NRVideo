@@ -18,10 +18,10 @@ Follow-up implementation on the same isolated branch:
   no decoder or colour-route changes were made.
 
 The application and preset-test targets were rebuilt after these changes. The
-existing preset regression executable currently reports a failure in its
-aggregate line even though the standalone settings validation is valid; this
-needs separate cleanup before treating the full preset suite as green. No
-hardware XeSS/RTX or Dolby test was performed.
+preset schema regression was updated to expect the current v21 file format
+(the temporal-NR field had already advanced the schema); the full preset suite
+now passes, along with the UI, subtitle and shader suites. No physical Dolby
+Vision or affected-user XeSS visual-quality test was performed.
 
 On isolated branch `codex/playback-nr-20260920` from checkpoint commit
 `ed00218`, implemented the authorized first slice from
