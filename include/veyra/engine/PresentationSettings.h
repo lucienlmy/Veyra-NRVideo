@@ -10,7 +10,7 @@ struct PresentationSettings {
     bool enabled=false;
     PacingMode mode=PacingMode::LowQueue;
     DisplaySync display=DisplaySync::Tearing;
-    OutputRateMode outputRate=OutputRateMode::FollowDisplay;
+    OutputRateMode outputRate=OutputRateMode::Off;
     double customFps=60.0;
     bool operator==(const PresentationSettings&) const = default;
     bool valid()const{return unsigned(mode)<=2&&unsigned(display)<=2&&unsigned(outputRate)<=2&&std::isfinite(customFps)&&customFps>=1.0&&customFps<=1000.0;}

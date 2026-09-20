@@ -1,5 +1,39 @@
 # Veyra 工作记录
 
+## 2026-09-20 Capture-start and NR panel follow-up
+
+- Fixed the physical-capture settings transaction that could wait forever for
+  the first DirectShow sample. A two-second no-first-sample deadline now hands
+  control to the existing capture recovery path and records
+  `capture-start/no first sample`, instead of leaving the engine thread in an
+  unbounded loop.
+- Changed the presentation default and v9 preference migration so output rate
+  limiting is off unless the user explicitly selects a cap. Preference files
+  now write schema 10; an old v9 `FollowDisplay` default migrates to `Off`.
+- Tightened the NR page layout: the exclusion-zone help no longer reserves a
+  large unexplained block, the master control is labelled NR denoise/enhance,
+  and the three runtime style buttons are named as the 003-inspired mappings
+  (`003自然`, `003电影`, `003高细节`). These are parameter/style mappings to
+  Veyra's current NR interface, not the closed 033 engine binary.
+- Removed `WS_EX_COMPOSITED` from the scrolling settings body and removed
+  synchronous `RDW_UPDATENOW` during layout. Controls remain individually
+  buffered, while wheel/drag/window-move repaint is asynchronous to avoid the
+  reported flashing and lag.
+
+Validation for this slice:
+
+- `veyra.exe` target built successfully with the Visual Studio environment:
+  `E:/项目/Veyra/build/playback-nr-20260920/veyra.exe`.
+- `veyra_ui_contract_tests.exe` passed (including preference round trips and
+  presentation-cap combinations).
+- `veyra_control_paint_tests.exe` and `veyra_live_timing_tests.exe` passed.
+- The all-target build remains blocked by the pre-existing missing
+  `third_party_local/amd/FidelityFX-SDK-2.3.0/.../ffx_api_loader.h` required by
+  the standalone FSR probes; this is unrelated to the application target.
+- No physical capture-card reproduction of the new no-first-sample path was
+  possible in this short slice; it is guarded by the new timeout and uses the
+  existing recovery code.
+
 ## 2026-09-20 Playback/NR implementation slice
 
 Follow-up implementation on the same isolated branch:

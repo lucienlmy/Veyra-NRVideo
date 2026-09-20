@@ -939,8 +939,14 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                     auto rs=physicalCapture?captureSource.tryRead(pkt,&frame):activeSource->read(pkt,&frame);
                     // Keep the accepted transaction and rollback state alive until
                     // the next real capture sample arrives. Never bind old PTS to now.
+                    const auto transactionWaitStart=Clock::now();
                     while(transaction&&isCapture&&rs==source::SourceReadStatus::Waiting&&!stop_){
                         if(paused_&&cachedFrame){frame=cachedFrame;pkt=cachedPacket;rs=source::SourceReadStatus::Frame;break;}
+                        if(elapsedMs(transactionWaitStart)>2000.0){
+                            veyra::log::error("capture-start",std::format("no first sample after {:.0f} ms during settings transaction; handing off to recovery",elapsedMs(transactionWaitStart)));
+                            rs=source::SourceReadStatus::Error;
+                            break;
+                        }
                         advanceLive();waitLive();rs=physicalCapture?captureSource.tryRead(pkt,&frame):activeSource->read(pkt,&frame);
                     }
                     if(stop_)break;
