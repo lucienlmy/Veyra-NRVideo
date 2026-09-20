@@ -1,5 +1,21 @@
 # Veyra 工作记录
 
+## 2026-09-21 Magpie research and released XeSS comparison
+
+See docs/MAGPIE_NR_XESS_COMPARISON_2026-09-21.md for fixed upstream commit,
+prioritized anti-flicker/denoise candidates, integration risks and ABBA evidence.
+Ran compare-xess.ps1: four 60-second p001 video tests, NR on, SR off, XeSS4x,
+all exit 0. Current two runs: zero preview skips, final SDK 240 fps; old first
+run similar, old second run had an unexplained 1994 ms return gap and 132 skips.
+No demonstrated current throughput regression; no additional rollback justified.
+Jelly/image quality and physical scanout remain unmeasured. NVOF stays default.
+Upstream DLSSNRTemporalTests passed WARP/debug-layer checks after resolving
+MSVC non-ASCII TEMP linking with relative paths in the designated E tmp folder.
+Artifacts/scripts/logs: E:/项目/Veyra/tests/corrective-audit-20260921/.
+Process tmp: E:/项目/Veyra/tmp/corrective-audit-20260921/.
+Only documentation changed this turn; no new product code/runtime/package,
+publication, drive mapping or global environment change. All tests exited.
+
 ## 2026-09-21 Corrective audit of playback / NR changes
 
 Checkpoint: `checkpoint/pre-corrective-audit-20260921`; isolated branch
