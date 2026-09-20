@@ -3,7 +3,8 @@
 Baseline: bcdbfbf, checkpoint/pre-nr-quality-perf-20260921.
 Branch: codex/playback-nr-20260920. User authorized local implementation and
 verification of research items 1/2/3/4/6, then 1.4.2 versus 1.4.3 performance.
-NR layering is excluded. NVOF remains default. No publishing or shutdown.
+NR layering is excluded. NVOF remains default. No publishing. User subsequently
+requested shutdown after completion, evidence saved and test processes exited.
 
 ## Acceptance and bounded work
 
@@ -50,4 +51,12 @@ Video: E:/项目/Likely7 个人账号/Deepseek Grok/p001.mp4; PS5 is off.
 
 - Baseline clean and checkpoint created; goal active.
 - Research basis: MAGPIE_NR_XESS_COMPARISON_2026-09-21.md.
-- Implementation and acceptance pending.
+- Temporal implementation is in the worktree; synthetic GPU regression log
+  `temporal-gpu-retest.log` passes. Real-video/visual acceptance remains open.
+- Existing release power CSVs analyzed in
+  `NR_PERFORMANCE_POWER_REVIEW_2026-09-21.md`; no blanket performance
+  regression demonstrated. No additional GPU run was needed for this analysis.
+- Real-video 30-second temporal off/on runs exited 0, but enabled cadence
+  regressed (58 versus 60 source FPS, lateness P95 46.54 versus 1.65 ms).
+  Not accepted. Compare against the previous enabled implementation before
+  attributing this to the new correction; retain evidence and bound tuning.

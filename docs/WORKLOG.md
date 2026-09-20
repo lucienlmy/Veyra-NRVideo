@@ -5526,6 +5526,31 @@ GPU full-group 观测约 NR 6.715ms、Flow 1.056ms、FG batch 10.042ms，slot CP
 4.519/16.692/17.102ms，18 个间隔超过 16.667ms，36 次 rejected→warmup；GPU
 P95 约 NR5.664ms、Flow1.265ms、FG10.659ms，slot CPU wait 仍为 0。降低 NR 分辨率
 接近但没有达到均匀固定 6X，因此仍只作为性能对照，不改变原画质验收目标。
+# NR quality/performance continuation (2026-09-21)
+
+Execution tools restored. Re-read worktree status and current plan; preserved
+uncommitted temporal changes. Analyzed existing eight power CSVs with explicit
+Import-Csv headers, Measure-Object means, and first-six/last-four sample trimming.
+Results and caveats: docs/NR_PERFORMANCE_POWER_REVIEW_2026-09-21.md. No blanket
+1.4.3 cost regression demonstrated. GPU tests from the earlier phase were read,
+not rerun or misreported as new runs.
+
+Staged existing built veyra.exe and shaders under
+E:/项目/Veyra/tests/nr-quality-perf-20260921/app, retaining unchanged dependencies.
+Ran p001.mp4 with --smoke-seconds 30 --smoke-view pro --nr --no-sr --fg-xess
+--fg-multiplier 4, off then on (--nr-temporal). Start-Process with per-process
+TEMP/TMP under E:/项目/Veyra/tmp/nr-quality-perf-20260921; 75s watchdog per run.
+Both exit0/failed=false, but temporal-on failed cadence acceptance: source
+58fps versus60, lateness P95 46.54 versus1.65ms, last previewSkipped80.
+Artifacts temporal-video-{off,on} logs in the evidence directory. Test session
+10105 exited0. One polling call mistakenly used exec-cell wait for a process
+session and returned not found; corrected to write_stdin on the same session,
+without restarting either test. No crash/error lines found in these app logs.
+
+Next: compare previous temporal-on implementation to isolate existing cost
+from new correction, then bounded optimization/revert and natural-image review.
+No implementation acceptance, release, final goal completion or shutdown.
+
 # Resize regression attribution follow-up (2026-09-20)
 
 Reviewed 2b99e89 and prior UI commits using git show/blame and source reads.
