@@ -1,5 +1,13 @@
 # Veyra 工作记录
 
+## 2026-09-21 NR quality and performance goal started
+
+Baseline bcdbfbf saved as checkpoint/pre-nr-quality-perf-20260921.
+Execution: docs/NR_QUALITY_PERFORMANCE_PLAN_2026-09-21.md. Local work only,
+NR layers excluded, NVOF default unchanged; no quality/feature reductions.
+Artifacts use E:/项目/Veyra/{tests,logs,tmp}/nr-quality-perf-20260921/.
+Keep validated improvements as commits and revert unsupported experiments.
+
 ## 2026-09-21 Magpie research and released XeSS comparison
 
 See docs/MAGPIE_NR_XESS_COMPARISON_2026-09-21.md for fixed upstream commit,
