@@ -1,5 +1,36 @@
 # Veyra 工作记录
 
+## 2026-09-21 Complete portable rebuild and actual startup verification
+
+User requested a newly built package after the previous ad-hoc DLL copy did
+not resolve their launch failure. The earlier `dumpbin /dependents` output
+only listed imports: it did not prove loader resolution or successful launch.
+The exact executable the user launched was not established.
+
+- Rebuilt the `veyra` target in `E:/项目/Veyra/build/playback-nr-20260920`
+  with the VS x64 environment, including the pending UI preference changes.
+- Staged all six FFmpeg/dav1d DLLs from the configured
+  `C:/veyra-deps/ffmpeg-ps5-dav1d-installed` prefix, retaining the recorded
+  PS5 slice patch and checking its publisher manifest.
+- Ran `scripts/package-portable.ps1` with Version 1.4.4, label
+  `beta-retest-20260921`, explicit build/output directories and the main
+  checkout as DependencyRoot. Runtime identities, notices, shaders and
+  manifests were assembled by the packaging script; no binary source changes.
+- Deliverable: `E:/项目/Veyra/test-packages/1.4.4beta-retest-20260921/Veyra-1.4.4beta-retest-20260921-win64-portable.zip`
+  (472387048 bytes); SHA256
+  `A139D6AC11D4F907B46B66CAC941095796765D4B0F32B1756EF8E682E871DCF0`.
+- Extracted that ZIP under `E:/项目/Veyra/verify/1.4.4beta-retest-20260921`
+  and verified all 123 manifest payload hashes. From an unrelated working
+  directory with PATH restricted to Windows/System32, the extracted EXE
+  passed `--smoke-empty --smoke-seconds 3` (exit 0).
+- The same extracted EXE played the user's p001.mp4 with NR on, SR/FG off,
+  `--smoke-seconds 10`: exit 0, failed=false, frames=433, nrEvaluated=433,
+  nvofExecuted=432, processedFps=60.00. This is package startup and NR playback
+  verification, not acceptance of the outstanding capture/UI/style defects.
+- Build, package, payload verification and playback evidence:
+  `E:/项目/Veyra/logs/package-rebuild-20260921/`.
+  No push or public release performed; the archive contains no user settings.
+
 ## 2026-09-21 Test-package runtime repair
 
 The manually assembled `1.4.4beta-playback-20260920` package contained the
