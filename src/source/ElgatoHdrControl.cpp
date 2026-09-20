@@ -1,0 +1,101 @@
+// Adapted from elgatosf/capture-device-support (MIT, Corsair Memory, Inc. 2022)
+// and Nitlink (MIT, NitLink Contributors 2026). Pins and changes: THIRD_PARTY_NOTICES.md.
+#include "veyra/source/ElgatoHdrControl.h"
+#include "veyra/source/CaptureColorOverride.h"
+#include "veyra/Log.h"
+#include <algorithm>
+#include <format>
+
+namespace veyra::source {
+namespace {
+constexpr GUID propertySet{0xD1E5209F,0x68FD,0x4529,{0xBE,0xE0,0x5E,0x7A,0x1F,0x47,0x92,0x26}};
+constexpr DWORD packetLow=720,packetHigh=721,tonemap=722;
+void record(const char* op,DWORD id,HRESULT hr,DWORD size) {
+    log::info("capture-elgato",std::format("{} property={} hr=0x{:08X} bytesOrFlags={}",op,id,uint32_t(hr),size));
+}
+HRESULT read(IKsPropertySet* ps,DWORD id,void* data,DWORD size) {
+    DWORD returned=0;
+    const HRESULT hr=ps->Get(propertySet,id,nullptr,0,data,size,&returned);
+    record("Get",id,hr,returned);
+    return FAILED(hr)?hr:returned==size?S_OK:HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+}
+}
+bool isElgatoMk2(std::wstring_view name) {
+    for(const auto* alias:{L"Game Capture 4K60 Pro MK.2",L"Elgato Game Capture 4K60 Pro MK.2"})
+        if(CompareStringOrdinal(name.data(),int(name.size()),alias,-1,TRUE)==CSTR_EQUAL)return true;
+    return false;
+}
+ElgatoHdrPacket parseElgatoHdrPacket(const std::array<unsigned char,32>& b) {
+    // Unlike an absent/failed read, an all-zero packet is the driver's SDR report.
+    if(std::all_of(b.begin(),b.end(),[](auto v){return v==0;}))return {true};
+    if((b[0]&0x7f)!=7||b[1]!=1||b[2]!=26||b[5]!=0)return {};
+    unsigned sum=0;for(unsigned i=0;i<30;++i)sum+=b[i];
+    if((sum&255)!=0||(b[4]!=0&&b[4]!=2&&b[4]!=3))return {};
+    const auto u16=[&](unsigned i){return float(unsigned(b[i])|(unsigned(b[i+1])<<8));};
+    return {true,b[4],u16(22),u16(26),u16(28)};
+}
+bool ElgatoHdrControl::configure(IUnknown* filter,std::wstring_view name,bool p010,
+                                unsigned overrideValue,pipeline::ColorDescription& color) {
+    if(!filter||!p010||!isElgatoMk2(name))return true;
+    if(!validCaptureColorOverride(overrideValue))return false;
+    auto hr=filter->QueryInterface(IID_PPV_ARGS(&properties_));
+    record("QueryInterface",0,hr,0);
+    if(FAILED(hr)) {
+        log::warn("capture-elgato","MK.2 private control unavailable; keeping existing color contract");
+        return true;
+    }
+    std::array<unsigned char,32> bytes{};
+    const auto low=read(properties_.Get(),packetLow,bytes.data(),16);
+    const auto high=read(properties_.Get(),packetHigh,bytes.data()+16,16);
+    const auto packet=SUCCEEDED(low)&&SUCCEEDED(high)?parseElgatoHdrPacket(bytes):ElgatoHdrPacket{};
+    log::info("capture-elgato",std::format("HDR InfoFrame valid={} header={:02X}/{:02X}/{:02X} eotf={} peak={} maxCLL={} maxFALL={}",packet.valid,bytes[0],bytes[1],bytes[2],packet.eotf,packet.peak,packet.maxCll,packet.maxFall));
+    const unsigned space=captureColorSpace(overrideValue);
+    const bool sourceHdr=packet.valid&&(packet.eotf==2||packet.eotf==3);
+    // A bit depth alone never triggers HDR or a hardware write. Explicit space
+    // is authoritative; auto only adopts a validated source InfoFrame.
+    const bool wantHdr=space==1||space==2||(!space&&(sourceHdr||color.isHdrPath()));
+    if(!wantHdr&&space!=3)return true;
+    const DWORD desired=wantHdr?0:1;
+    const bool originalKnown=SUCCEEDED(read(properties_.Get(),tonemap,&original_,sizeof(original_)))&&original_<=1;
+    if(!originalKnown||original_!=desired) {
+        DWORD flags=0;hr=properties_->QuerySupported(propertySet,tonemap,&flags);
+        record("QuerySupported",tonemap,hr,flags);
+        // Official SDK issues Set directly. QuerySupported is advisory because
+        // installed MK.2 drivers need not advertise every private property.
+        DWORD value=desired;
+        hr=properties_->Set(propertySet,tonemap,nullptr,0,&value,sizeof(value));
+        record("Set",tonemap,hr,sizeof(value));
+        if(FAILED(hr))return false;
+        restore_=originalKnown;
+        DWORD actual=0;
+        const auto readback=read(properties_.Get(),tonemap,&actual,sizeof(actual));
+        if(SUCCEEDED(readback)&&actual!=desired) {
+            log::error("capture-elgato","Tonemap readback disagrees; refusing a mislabeled color contract");
+            return false;
+        }
+        if(!originalKnown)log::warn("capture-elgato","Tonemap original state unreadable; Set succeeded but close cannot restore an unknown value");
+    }
+    if(!space&&sourceHdr) {
+        const auto previous=color;
+        applyCaptureColorOverride(color,packet.eotf==2?1:2);
+        // InfoFrame declares EOTF, not YUV encoding or quantization. Preserve
+        // explicit driver matrix/primaries; only fill their missing defaults.
+        color.matrixAssumed=color.primariesAssumed=true;
+        if(!previous.matrixAssumed&&previous.matrix!=pipeline::YuvMatrix::Unknown){color.matrix=previous.matrix;color.matrixAssumed=false;}
+        if(!previous.primariesAssumed&&previous.primaries!=pipeline::ColorPrimaries::Unknown){color.primaries=previous.primaries;color.primariesAssumed=false;}
+    }
+    if(wantHdr&&sourceHdr&&(space==0||(space==1&&packet.eotf==2)||(space==2&&packet.eotf==3))) {
+        color.hdrMasteringPeakNits=packet.peak;
+        color.hdrMaxCllNits=packet.maxCll;
+        color.hdrMaxFallNits=packet.maxFall;
+    }
+    log::info("capture-elgato",std::format("MK.2 P010 hardwareTonemap={} manualSpace={} sourceEotf={} nativeHdrRequested={}",desired,space,packet.eotf,wantHdr));
+    return true;
+}
+ElgatoHdrControl::~ElgatoHdrControl() {
+    if(restore_&&properties_) {
+        const auto hr=properties_->Set(propertySet,tonemap,nullptr,0,&original_,sizeof(original_));
+        record("Restore",tonemap,hr,sizeof(original_));
+    }
+}
+}

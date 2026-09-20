@@ -1,5 +1,45 @@
 # Veyra 工作记录
 
+## 2026-09-20 Elgato MK.2 vendor HDR control
+
+Investigated user log veyra-app(30).log and Nitlink; official Elgato support
+confirms Veyra omitted the vendor InfoFrame and card-side HDR-to-SDR switch.
+This is a concrete integration gap, not proof of the user's sole color cause.
+Checkpoint `checkpoint/pre-elgato-hdr-control-20260920` at c84eb72; branch
+`codex/capture-color-144beta-20260920`. Plan and evidence:
+`docs/ELGATO_MK2_HDR_PLAN_2026-09-20.md`.
+
+Added ElgatoHdrControl header/source, wired CaptureCardSource configure/close,
+added ElgatoHdrCases to CaptureColorContractTests/CMake; exact MK.2/P010 only.
+No shader/color formula changes. Added upstream pinned MIT provenance and
+license to notices and portable packer; refreshed beta release notes.
+
+Commands: `scripts/build-isolated.ps1 -Root . -BuildDirectory
+E:/项目/Veyra/build/color-mixer-hue-20260920 -DependencyCache
+E:/项目/Veyra/build/frame-pacing-20260918/CMakeCache.txt -TempDirectory
+E:/项目/Veyra/tmp/elgato-hdr-20260920 -Targets veyra,veyra_capture_color_tests
+-DisplayVersion 1.4.4beta` passed. Capture tests: 185 PASS, failures=0.
+Build retains pre-existing third-party warnings. No failed compilation/tests.
+Logs: `E:/项目/Veyra/logs/elgato-hdr-20260920/{build,capture-color,package,smoke}.txt`.
+
+Packaged using `scripts/package-portable.ps1 -Version 1.4.4 -Label beta-elgato
+-LocalVideoHdr` with the build above and output
+`E:/项目/Veyra/test-packages/1.4.4beta-elgato-20260920`.
+ZIP: Veyra-1.4.4beta-elgato-win64-portable.zip, 472356915 bytes,
+SHA256 EFF48396AE7E58ECECABEDD069D1158E079753042D0FC97B6D5C2DD775321994.
+Independent ZIP stream verification matches all 122 manifest payload hashes
+and sizes, including new MIT license. Publisher runtime audit and forbidden
+payload scan passed; no new runtime or SDK in source Git.
+
+`scripts/acceptance/portable-smoke.ps1` passed all seven cases (7 seconds each),
+input `E:/项目/Veyra/tests/1.4.2beta/visible-scene.mkv`, results under
+`E:/项目/Veyra/tests/elgato-hdr-20260920/portable-smoke/result.json`.
+Process TEMP/TMP redirected to task tmp. Prior beta retained for comparison.
+No MK.2 attached: actual driver Set/readback and actual HDR color remain user
+acceptance items. Live HDMI SDR/HDR changes require reconnect. Write-only
+driver original state cannot be restored; this limitation is logged. No push
+or GitHub release performed.
+
 ## 2026-09-20 1.4.4beta 本地内测包
 
 在 `codex/capture-color-144beta-20260920` 接入采集卡输入色彩空间与范围选择：

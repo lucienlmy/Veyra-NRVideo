@@ -9,6 +9,7 @@
 #include "veyra/source/CaptureCodec.h"
 #include "veyra/source/CaptureCompressedDecoder.h"
 #include "veyra/source/AverMediaAudioSwitch.h"
+#include "veyra/source/ElgatoHdrControl.h"
 #include "veyra/pipeline/ColorMetadata.h"
 #include "veyra/Log.h"
 #include "veyra/sink/AudioFormat.h"
@@ -235,6 +236,7 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
     ComPtr<IGraphBuilder> graph;ComPtr<ICaptureGraphBuilder2> builder;ComPtr<IBaseFilter> device,grabFilter,nullFilter,audioFilter;ComPtr<IAMStreamConfig> config;ComPtr<ISampleGrabber> grab;ComPtr<IMediaControl> control;ComPtr<IMediaEvent> events;
     float lastAudioGain=-1;bool audioGainSupported=false;
     ComPtr<IBaseFilter> audioSink;ComPtr<IReferenceClock> referenceClock;
+    std::unique_ptr<ElgatoHdrControl> elgatoHdr;
     std::unique_ptr<sink::CaptureAudioSession> audioSession;
     // Dolby/DTS passthrough: when the device offers only compressed media types
     // the raw bursts are decoded here and the session is configured with the
@@ -694,6 +696,18 @@ bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.cle
     const unsigned colorOverride=selection.colorOverride;
     log::info("capture-color",std::format("driver controlFlags=0x{:08X} colorInfoPresent={} transfer={} matrix={} primaries={} chroma={} override={}",p.layout.colorControlFlags,bool(p.layout.colorControlFlags&AMCONTROL_COLORINFO_PRESENT),int(p.layout.color.transfer),int(p.layout.color.matrix),int(p.layout.color.primaries),int(p.layout.color.chromaLocation),colorOverride));
     if(!validCaptureColorOverride(colorOverride))return false;
+    auto elgatoHdr=std::make_unique<ElgatoHdrControl>();
+    if(!compressedPath&&p.layout.format==AV_PIX_FMT_P010){
+        std::wstring deviceName;
+        const auto devices=monikers(false);
+        for(size_t i=0;i<devices.size();++i){
+            if(selection.stable?monikerPath(devices[i].Get())==selection.videoPath:i==index){deviceName=propertyString(devices[i].Get(),L"FriendlyName");break;}
+        }
+        if(!elgatoHdr->configure(p.device.Get(),deviceName,true,colorOverride,p.layout.color)){
+            error_=L"Elgato HDR 输出模式设置失败，请关闭其他采集程序后重新连接，并检查日志中的 capture-elgato。";
+            return false;
+        }
+    }
     if(colorOverride){
         if(compressedPath){error_=L"压缩采集使用码流颜色信息；手动颜色和范围请选择原生采集格式。";log::error("capture-color","Manual color override requires raw capture; compressed override is not silently ignored");return false;}
         const auto space=captureColorSpace(colorOverride);
@@ -769,6 +783,7 @@ bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.cle
         p.decodeStop=false;p.decodeThread=std::thread([&p]{p.decodeLoop();});
         log::info("capture-decode",std::format("decode worker started queue={} backend={} (single decode thread; the parallel pool is a later refinement)",p.compressedQueueLimit,p.compressedDecoder.backendName()));
     }
+    p.elgatoHdr=std::move(elgatoHdr);
     p.configured=true;
     reconnectDesc_=desc;reconnectInfo_=p.info;reconnectFormat_.clear();
     for(const auto& candidate:enumerateFormats(p.config.Get()))if(candidate.index==format){reconnectFormat_=candidate.key;break;}
@@ -1210,6 +1225,7 @@ SourceReadStatus CaptureCardSource::readWithWait(pipeline::FramePacket& packet,c
 void CaptureCardSource::close()noexcept{
     auto& p=*p_;if(p.control){const HRESULT hr=p.control->Stop();if(FAILED(hr))log::error("capture-close",std::format("Stop failed hr=0x{:08X}; releasing graph",uint32_t(hr)));}if(p.grab){const HRESULT hr=p.grab->SetCallback(nullptr,0);if(FAILED(hr))log::error("capture-close",std::format("detach callback hr=0x{:08X}",uint32_t(hr)));}
     if(p.wasapi)p.wasapi->stop();p.wasapi.reset();
+    p.elgatoHdr.reset();
     p.averMediaSwitch.stop();p.embeddedAudioUnavailable=false;
     if(p.audioSession)p.audioSession->stop();p.audioError.clear();
     if(p.audioPassthrough)p.audioPassthrough->close();

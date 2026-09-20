@@ -2,6 +2,28 @@
 
 NVIDIA SDKs and runtimes are excluded from source control. The publisher-authorized experimental Release package contains only selected runtime DLLs and applicable notices, as documented in `docs/RUNTIME_COMPONENTS_0.0.2.md`. This is not vendor endorsement or a general redistribution grant. ReShade/RenoDX add-ons are not loaded or distributed by the product.
 
+## Elgato MK.2 capture control
+
+MIT adaptations in `src/source/ElgatoHdrControl.cpp` and its header:
+
+- https://github.com/elgatosf/capture-device-support at
+  `fe9630974d47f51bf54826e72fb8b654e620aa93`, `SampleCode/DriverInterface.cpp`
+  and `Library/HDMIInfoFramesAPI.h`: private property GUID, IDs 720/721/722,
+  two-part HDR packet and hardware HDR-to-SDR control protocol. Copyright
+  (c) 2022 Corsair Memory, Inc.
+- https://github.com/nitlink-dev/nitlink at
+  `4f8a723406f63c6e92832488a6022fcf25233871`,
+  `src/capture/elgato_hdr_control.cpp` and `elgato_device_identity.h`:
+  exact MK.2 aliases, packet read size checks and hardware/native HDR pairing.
+  Copyright (c) 2026 NitLink Contributors.
+
+Veyra changes: use the already selected DirectShow filter instead of opening
+another device; scope to MK.2/P010; validate packet length/type/checksum;
+retain manual overrides; log HRESULT/readback and restore a readable initial
+tonemap value on close. No vendor shader, SDK header or binary is vendored.
+No global color/chroma formula change. Full license:
+`licenses/capture/ELGATO_NITLINK_MIT.txt`.
+
 ## NVENC API declarations
 
 Source: https://github.com/FFmpeg/nv-codec-headers ; encoder ABI baseline `e844e5b26f46bb77479f063029595293aa8f812d` (tag `n13.0.19.0`, SDK 13.0 declarations), stored only under ignored `third_party_local/nvidia/nv-codec-headers-13.0`. Stage with `git clone --depth 1 --branch n13.0.19.0 https://github.com/FFmpeg/nv-codec-headers.git third_party_local/nvidia/nv-codec-headers-13.0`. CMake accepts `VEYRA_NVENC_HEADERS_ROOT`; compilation checks major/minor 13.0. The previous 13.1 checkout `eddcea9e27f6b772057c9b3f87de2cc1737faffc` remains unmodified for other local tools. Veyra now queries the driver's maximum API before creating the 13.0 function table/session and uses the same ABI for every structure, without pretending that a version-number-only downgrade changes structure layouts. No header or runtime is copied into source control.
