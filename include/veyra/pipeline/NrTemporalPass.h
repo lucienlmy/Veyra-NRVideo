@@ -1,5 +1,6 @@
 #pragma once
 #include "veyra/pipeline/GpuPassUtils.h"
+#include "veyra/engine/EnhancementSettings.h"
 #include <array>
 
 namespace veyra::pipeline {
@@ -9,7 +10,8 @@ class NrTemporalPass {
 public:
     bool initialize(ID3D12Device*,ID3D12Resource* base,ID3D12Resource* motion,ID3D12Resource* output);
     ID3D12Resource* raw()const{return raw_.Get();}
-    void run(ID3D12GraphicsCommandList*,StateTracker&,bool reset,bool haveMotion,double frameMs);
+    void run(ID3D12GraphicsCommandList*,StateTracker&,bool reset,bool haveMotion,double frameMs,
+             float total,const engine::ProtectionSettings& protection);
     void reset(){valid_=false;}
     void close();
 private:

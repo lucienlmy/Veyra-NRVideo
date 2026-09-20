@@ -74,3 +74,10 @@ same enabled setting, then perform one bounded optimization or withdraw the
 regressing change. On/off alone does not establish which new edit caused
 the cost: the previous version already had a temporal pass. Natural-image
 visual acceptance is still outstanding.
+
+The accepted continuation optimization is the groupshared 10x10 halo in
+`shaders/NrTemporal.hlsl`. It removes duplicate nine-tap work without changing
+output fingerprints. Product D3D12 regression and a 30-second p001.mp4
+temporal-on smoke passed; the execution plan records the measured cadence and
+the limit that this is not a subjective natural-video or physical-display
+latency acceptance. No power claim is made from this short run.

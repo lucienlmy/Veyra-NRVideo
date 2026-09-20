@@ -55,7 +55,12 @@ SAOG0721/Magpie, commit
 `src/Magpie.Core/DLSSNRTemporalShader.h` (GPL-3.0). The Veyra version keeps
 the existing D3D12 graph, uses its source motion extent and signed HDR working
 space, and adds its own resource/reset plumbing; it is not a binary or runtime
-copy. The switch is default-off until affected RTX hardware and motion-scene
+copy. The 2026-09-21 adaptation distinguishes explicit protection masks from
+valid zero residual observations, excludes protected/feathered history, and
+rejects invalid source time intervals. A Veyra groupshared tile reuses the
+upstream-derived neighborhood observations without changing their tap order.
+Product D3D12 regression coverage is in
+`tests/integration/NrTemporalGpuTests.cpp`. The switch is default-off until affected RTX hardware and motion-scene
 quality tests reject ghosting and flicker regressions.
 
 ## AMD FidelityFX Optical Flow

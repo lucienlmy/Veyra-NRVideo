@@ -60,3 +60,21 @@ Video: E:/项目/Likely7 个人账号/Deepseek Grok/p001.mp4; PS5 is off.
   regressed (58 versus 60 source FPS, lateness P95 46.54 versus 1.65 ms).
   Not accepted. Compare against the previous enabled implementation before
   attributing this to the new correction; retain evidence and bound tuning.
+
+## Accepted bounded optimization
+
+The original nine-tap temporal shader recomputed the same one-pixel-halo
+observations for neighboring threads. A groupshared 10x10 tile now computes
+each observation once and reuses it, preserving the original tap order,
+thresholds, signed residuals and reset/protection behavior. This is a scheduling
+optimization only; it adds no holdback or frame-rate cap.
+
+Evidence: `tests/nr-quality-perf-20260921/temporal-gpu-accepted.log` passed the
+product D3D12 pass with debug layer clean. The tiled shader and the prior shader
+produced identical full-frame fingerprints for 41 regression frames, including
+odd extents, fractional motion, resets, protection and signed HDR cases.
+With the same staged application, video temporal-on improved from 58 source FPS,
+46.48 ms lateness P95 and 2.014 ms residual GPU P95 to 60 FPS, 41.71 ms and
+1.369 ms respectively; preview skips fell from 67 to 1. These are software
+timings, not physical display latency. The run remains a bounded smoke test,
+not a natural-video subjective quality acceptance.

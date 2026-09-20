@@ -9,7 +9,7 @@ bool NrTemporalPass::initialize(ID3D12Device* device,ID3D12Resource* base,ID3D12
     auto desc=base->GetDesc();width_=unsigned(desc.Width);height_=desc.Height;
     raw_=makeTexture(device,width_,height_,DXGI_FORMAT_R16G16B16A16_FLOAT,true);
     for(unsigned i=0;i<2;++i){history_[i]=makeTexture(device,width_,height_,DXGI_FORMAT_R16G16B16A16_FLOAT,true);guide_[i]=makeTexture(device,width_,height_,DXGI_FORMAT_R16G16B16A16_FLOAT,true);if(!history_[i]||!guide_[i])return false;}
-    std::vector<uint8_t> shader;if(!raw_||!pass_.loadShader("NrTemporal.dxil",shader)||!pass_.create(device,shader,16,5,3,8))return false;
+    std::vector<uint8_t> shader;if(!raw_||!pass_.loadShader("NrTemporal.dxil",shader)||!pass_.create(device,shader,16,5,3,24))return false;
     DescriptorStager staging;if(!staging.initialize(device,10))return false;
     for(unsigned i=0;i<2;++i){
         ID3D12Resource* sources[]={base,raw_.Get(),history_[1-i].Get(),guide_[1-i].Get(),motion};
@@ -19,8 +19,10 @@ bool NrTemporalPass::initialize(ID3D12Device* device,ID3D12Resource* base,ID3D12
         makeUav(device,guide_[i].Get(),DXGI_FORMAT_R16G16B16A16_FLOAT,cpuHandleOf(pass_,i*8+7));
     }return true;
 }
-void NrTemporalPass::run(ID3D12GraphicsCommandList* list,StateTracker& tracker,bool reset,bool haveMotion,double frameMs){
-    const auto i=index_;const bool useHistory=valid_&&!reset&&haveMotion;
+void NrTemporalPass::run(ID3D12GraphicsCommandList* list,StateTracker& tracker,bool reset,bool haveMotion,double frameMs,
+                         float total,const engine::ProtectionSettings& protection){
+    const auto i=index_;
+    const bool useHistory=valid_&&!reset&&haveMotion&&std::isfinite(frameMs)&&frameMs>0&&frameMs<=250;
     tracker.transition(list,raw_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     tracker.transition(list,base_,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     tracker.transition(list,motion_,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -28,8 +30,9 @@ void NrTemporalPass::run(ID3D12GraphicsCommandList* list,StateTracker& tracker,b
     tracker.transition(list,guide_[1-i].Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     for(auto* r:{output_,history_[i].Get(),guide_[i].Get()})tracker.transition(list,r,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     // 80 ms past-history EMA; no future frames or presentation holdback.
-    const float weight=useHistory?float(std::exp(-std::clamp(frameMs,1.0,250.0)/80.0)):0.f;
-    const float c[8]={std::bit_cast<float>(width_),std::bit_cast<float>(height_),weight,0,0,0,0,0};
+    const float weight=useHistory?float(std::exp(-frameMs/80.0)):0.f;
+    float c[24]={std::bit_cast<float>(width_),std::bit_cast<float>(height_),weight,total,protection.enabled?1.f:0.f,protection.featherPixels,0,0};
+    for(unsigned n=0;n<4;++n){const auto r=protection.regions[n];c[8+n*4]=r.left;c[9+n*4]=r.top;c[10+n*4]=r.right;c[11+n*4]=r.bottom;}
     pass_.bind(list,c,gpuHandleOf(pass_,i*8).ptr,gpuHandleOf(pass_,i*8+5).ptr);
     list->Dispatch((width_+7)/8,(height_+7)/8,1);
     for(auto* r:{output_,history_[i].Get(),guide_[i].Get()}){tracker.uavBarrier(list,r);tracker.transition(list,r,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);}

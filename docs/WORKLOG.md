@@ -1,5 +1,17 @@
 # Veyra 工作记录
 
+## 2026-09-21 Bounded NR quality/performance result
+
+See docs/NR_QUALITY_PERFORMANCE_ACCEPTANCE_2026-09-21.md for final decisions,
+commands, artifacts and limitations. Tiled confirmation: 60 final source FPS,
+1 preview skip, residual GPU P95 1.042 ms versus non-tiled confirmation
+57 FPS / 71 skips / 2.023 ms. Both exit 0. The 41-frame fingerprint comparison
+is exact on the test corpus, D3D12 debug errors zero. Corrected protection/time
+handling is retained with the optional feature default off. Visual acceptance
+is still pending; no independent denoiser or universal 6X/power fix claimed.
+Final compiled shader restored in build and diagnostic staging, hash in report.
+All smoke sessions completed. No package, push or main merge.
+
 ## 2026-09-21 NR quality and performance goal started
 
 Baseline bcdbfbf saved as checkpoint/pre-nr-quality-perf-20260921.
@@ -5594,3 +5606,16 @@ E:/项目/Veyra/logs/color-mixer-hue-20260920/{cpu,gpu,gpu-runtime}.*.log;
 build and process-local tmp are under the matching E:/项目/Veyra directories.
 git diff --check passed. No PS/LR visual equivalence or user-image acceptance
 claimed; no packaging, publication, runtime changes or additional GPU pass.
+
+2026-09-21 continuation: compared the pre-existing temporal shader with the
+current correction under identical p001.mp4 settings. The correction itself
+was not promoted because temporal-on remained cadence-limited. Implemented one
+bounded groupshared 10x10 halo optimization in `shaders/NrTemporal.hlsl`.
+`temporal-gpu-accepted.log` passed the product D3D12 regression (debug clean),
+and 41 full-frame fingerprints matched the prior shader. The staged 30-second
+temporal-on smoke improved residual GPU P95 2.014 to 1.369 ms, source 58 to
+60 FPS, lateness P95 46.48 to 41.71 ms, and preview skips 67 to 1; exit 0.
+This is software timing only, not display latency or subjective quality proof.
+No independent denoiser was added because required VFX/NvCV/CUDA GPU-only
+prerequisites and distribution identity remain unavailable. No guidance or
+XeSS rollback was justified by the existing evidence. No release or shutdown.

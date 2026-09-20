@@ -1256,6 +1256,12 @@ int argc=0;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);for(int i=1;i<a
     if(positionalArgv)LocalFree(positionalArgv);
 }
 if(workerMapping){const int code=veyra::engine::runExportWorker(workerMapping);CoUninitialize();return code;}
+if(smokeSeconds>0){
+    int temporalArgc=0;auto temporalArgv=CommandLineToArgvW(GetCommandLineW(),&temporalArgc);
+    for(int i=1;i<temporalArgc;++i)if(!_wcsicmp(temporalArgv[i],L"--nr-temporal"))initialOptions.settings.nrTemporal=true;
+    if(temporalArgv)LocalFree(temporalArgv);
+    veyra::log::info("app",std::format("smoke NR temporal={}",initialOptions.settings.nrTemporal));
+}
 if(smokeSeconds<=0&&exportOutput.empty()){uiPreferences=preferences.load();initialOptions=veyra::engine::PlayerOptions::from(preferences.startup(initialOptions.snapshot()));engine.setVolume(uiPreferences.volume,uiPreferences.muted);uiState.subtitles=uiPreferences.subtitles;subtitlePixels=uiPreferences.subtitleSize;uiState.subtitleOutline=uiPreferences.subtitleOutline;uiState.subtitleBackground=uiPreferences.subtitleBackground;uiState.subtitleSecondLanguage=uiPreferences.subtitleSecondLanguage;uiState.subtitleMargin=uiPreferences.subtitleMargin;uiState.subtitleFont=uiPreferences.subtitleFont;}
 engine.requestPresentation(uiPreferences.presentation);
 engine.requestSettings(initialOptions.snapshot());

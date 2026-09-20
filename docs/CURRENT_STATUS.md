@@ -1,5 +1,12 @@
 # 当前项目状态 / Current Status
 
+2026-09-21 local bounded NR/performance review: temporal protection/time fixes
+and shared-neighborhood GPU optimization tested on RTX 5070. Default remains
+off; natural-video visual acceptance and independent VFX denoise are not
+delivered. No general 1.4.3 performance regression established. See
+[evidence and limits](NR_QUALITY_PERFORMANCE_ACCEPTANCE_2026-09-21.md).
+No new release or main merge.
+
 **2026-09-20：1.4.3 已正式发布为 [GitHub Latest](https://github.com/Likely7/Veyra-NRVideo/releases/tag/v1.4.3)。** 发布源码/标签对应 `3b4570e`，正确修复已整合至 main；正式便携包七项检查、120 个载荷校验、对应源码 856 个文件校验及四项远端资产哈希核对通过。用户最新测试包与正式 EXE 完全相同。固定 6X 均匀呈现及未定因设备反馈仍按下方边界处理。发布记录见 [RELEASE_1.4.3_EXECUTION.md](RELEASE_1.4.3_EXECUTION.md)。
 
 2026-09-20：用户验收最新 1.4.3 测试包并授权正式发布。当前发布工作包含截至 `139db25` 的产品修复及远端中文 README 精简，分支审计与正式构建/发布结果统一记录在 [1.4.3 发布执行记录](RELEASE_1.4.3_EXECUTION.md)。下方“仅本地/未发布”语句均为历史阶段记录；固定 6X 均匀呈现仍未解决，不随正式版发布改为通过。

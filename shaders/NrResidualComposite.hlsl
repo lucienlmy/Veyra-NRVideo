@@ -1,3 +1,4 @@
+#include "NrProtection.hlsli"
 Texture2D<float4> baseTex:register(t0);
 Texture2D<float4> nrInput:register(t1);
 Texture2D<float4> nrFinal:register(t2);
@@ -21,15 +22,7 @@ float shadowSafe(float base,float rawDelta,float requestedDelta){
     uint w,h,nw,nh;baseTex.GetDimensions(w,h);nrInput.GetDimensions(nw,nh);
     if(id.x>=w||id.y>=h)return;
     float4 base=baseTex[id.xy];
-    float protection=0;
-    if(protectionEnabled>0){
-        float2 p=float2(id.xy)+0.5;
-        for(uint i=0;i<4;++i){float4 r=regions[i]*float4(w,h,w,h);
-            if(r.z<=r.x||r.w<=r.y)continue;
-            float edge=min(min(p.x-r.x,r.z-p.x),min(p.y-r.y,r.w-p.y));
-            protection=max(protection,featherPixels>0?smoothstep(0,featherPixels,edge):(edge>=0?1:0));
-        }
-    }
+    float protection=NrProtection(float2(id.xy)+0.5,uint2(w,h),protectionEnabled,featherPixels,regions);
     if(total==0||protection>=1){outputTex[id.xy]=base;return;}
     float2 pos=(float2(id.xy)+0.5)*float2(nw,nh)/float2(w,h)-0.5;
     int2 origin=(int2)floor(pos);float2 f=frac(pos);float3 delta=0;float weights=0;
