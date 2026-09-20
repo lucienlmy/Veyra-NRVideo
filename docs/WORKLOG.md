@@ -23,6 +23,20 @@ preset schema regression was updated to expect the current v21 file format
 now passes, along with the UI, subtitle and shader suites. No physical Dolby
 Vision or affected-user XeSS visual-quality test was performed.
 
+Follow-up physical capture smoke test (after the user requested a live device
+run): the connected device enumerated as `MCS 4K--T800`, not VC-007PRO. Its
+format list contains `2560x1440@60 NV12` at format index 4. Using
+`capture:0:4:-1`, NR on, SR off and XeSS 4X for roughly 15 seconds on the local
+RTX 5070, the application reported `capture=true`, `processedFps=60.00`,
+`callbackFps=59.94`, `captureDropped=1`, `failed=false`, `nrEvaluated=708`,
+`sdkPresented=2826`, `sdkGenerated=2118`, `sdkSubmitFps=240.00`; the XeSS hook
+ended with `scheduled=1412 refused=0 bypassed=0 fallbackFrames=0`. The new
+`frameRenderTimeMs` samples centered at 16.667 ms (P95 17.701 ms; one startup
+or stall outlier reached 50.313 ms). This validates live initialization,
+continuous 4X provider submission and clean teardown, not visual jelly, scanout
+cadence or a before/after image-quality comparison. Evidence is under
+`E:/项目/Veyra/tmp/playback-nr-20260920/xess-capture-package/logs/veyra-app.log`.
+
 On isolated branch `codex/playback-nr-20260920` from checkpoint commit
 `ed00218`, implemented the authorized first slice from
 `docs/PLAYBACK_SIX_ISSUE_AUDIT_PLAN_2026-09-20.md`:
