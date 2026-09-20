@@ -39,7 +39,7 @@ std::wstring signatureOf(const std::vector<SubtitleLine>& lines,const SubtitleVi
         signature+=std::format(L"{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|",s.back,s.outlineWidth,s.shadow,s.marginL,s.marginR,s.marginV,s.bold,s.italic,s.background,s.font.size());
     }
     signature+=std::format(L"#{}|{}:{}|{}|{}|{}|{}",view.scale,view.fontOverride.size(),view.fontOverride,view.outline?1:0,view.background?1:0,view.bottomMargin,view.blockGap);
-    signature+=std::format(L"/{}x{}/{}",rect.right,rect.bottom,view.targetLines);
+    signature+=std::format(L"/{}x{}/{}/{}",rect.right,rect.bottom,view.targetLines,view.fitToLines);
     signature+=std::format(L"/{}/{}/{}/{}/{}",view.preview.zoom,view.preview.centerX,view.preview.centerY,view.videoWidth,view.videoHeight);
     return signature;
 }
@@ -125,7 +125,7 @@ void updateSubtitleOverlay(HWND h,const std::vector<SubtitleLine>& lines,const S
             // rectangle can silently omit the end of a long cue before fitting.
             auto measure=[&](float size){Font font(use,size,toFontStyle(line.style.bold,line.style.italic),UnitPixel);RectF bounds;
                 graphics.MeasureString(text.c_str(),int(text.size()),&font,RectF(0,0,availableWidth,1e7f),&format,&bounds);return bounds;};
-            if(!positioned&&view.targetLines>0){
+            if(!positioned&&view.fitToLines&&view.targetLines>0){
                 const float minimum=float(dip(h,12));
                 for(int attempt=0;attempt<24&&fontPixels>minimum;++attempt){
                     Font font(use,fontPixels,toFontStyle(line.style.bold,line.style.italic),UnitPixel);

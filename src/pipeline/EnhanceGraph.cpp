@@ -1145,7 +1145,8 @@ bool EnhanceGraph::createViews()
     stagedSrv(desc_.nrBeforeSr?srcRgba_.Get():workRgba_.Get(),DXGI_FORMAT_R16G16B16A16_FLOAT,residualPass_,0);
     stagedSrv(nrInput_.Get(),DXGI_FORMAT_R16G16B16A16_FLOAT,residualPass_,1);
     stagedSrv(finalRgba_.Get(),DXGI_FORMAT_R16G16B16A16_FLOAT,residualPass_,2);
-    makeUav(context_.device(),residualRgba_.Get(),DXGI_FORMAT_R16G16B16A16_FLOAT,cpu(residualPass_,3));
+    if(desc_.nrTemporal&&!nrTemporal_.initialize(context_.device(),desc_.nrBeforeSr?srcRgba_.Get():workRgba_.Get(),flowTex_.Get(),residualRgba_.Get()))return false;
+    makeUav(context_.device(),desc_.nrTemporal?nrTemporal_.raw():residualRgba_.Get(),DXGI_FORMAT_R16G16B16A16_FLOAT,cpu(residualPass_,3));
     stagedSrv(flowTex_.Get(),DXGI_FORMAT_R16G16_FLOAT,flowAdaptPass_,0);
     makeUav(context_.device(),nrFlow_.Get(),DXGI_FORMAT_R16G16_FLOAT,cpu(flowAdaptPass_,1));
     makeUav(context_.device(),baseFlow_.Get(),DXGI_FORMAT_R16G16_FLOAT,cpu(flowAdaptPass_,2));
@@ -1837,11 +1838,14 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
 
     if(nrEnabled_&&nrHandle_){
         gpuTimer_.mark(list,GpuStage::Residual);
-        tracker_.transition(list,residualRgba_.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        auto* raw=desc_.nrTemporal?nrTemporal_.raw():residualRgba_.Get();
+        tracker_.transition(list,raw,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         const auto& r=desc_.residual;float c[24]={r.total,r.darken,r.brighten,r.color,r.luminance,desc_.protection.enabled?1.0f:0.0f,desc_.protection.featherPixels,desc_.hdrWorking()?1.0f:0.0f};
         for(size_t i=0;i<4;++i){const auto q=desc_.protection.regions[i];c[8+i*4]=q.left;c[9+i*4]=q.top;c[10+i*4]=q.right;c[11+i*4]=q.bottom;}
         residualPass_.bind(list,c,gpuHandleOf(residualPass_,0).ptr,gpuHandleOf(residualPass_,3).ptr);
-        list->Dispatch(((desc_.nrBeforeSr?srcW_:workW_)+15)/16,((desc_.nrBeforeSr?srcH_:workH_)+15)/16,1);tracker_.uavBarrier(list,residualRgba_.Get());tracker_.transition(list,residualRgba_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);gpuTimer_.mark(list,GpuStage::Residual,true);
+        list->Dispatch(((desc_.nrBeforeSr?srcW_:workW_)+15)/16,((desc_.nrBeforeSr?srcH_:workH_)+15)/16,1);tracker_.uavBarrier(list,raw);tracker_.transition(list,raw,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        if(desc_.nrTemporal)nrTemporal_.run(list,tracker_,reset,haveFlow,ptsMs-prevPtsMs_);
+        gpuTimer_.mark(list,GpuStage::Residual,true);
     }
 
     if(desc_.nrBeforeSr&&!runSr())return false;
@@ -2022,6 +2026,8 @@ bool EnhanceGraph::resolveGeneration(FrameOutputs& out)
 }
 
 bool EnhanceGraph::applySettings(const engine::EnhancementSettings& s){
+    if(s.nrTemporal!=desc_.nrTemporal)return false;
+    nrTemporal_.reset(); // settings/protection changes must not revive old corrections
     // A non-NVIDIA adapter keeps the user's requested NR setting in the UI
     // but has this NGX-only stage explicitly disabled in the graph. Do not
     // reject unrelated live settings in that degraded, playable state.
@@ -2158,7 +2164,7 @@ void EnhanceGraph::shutdown()
     rgbPass_={};rgbTex_.Reset();
     for(unsigned i=0;i<2;++i){if(upRgb_[i]&&mappedRgb_[i])upRgb_[i]->Unmap(0,nullptr);mappedRgb_[i]=nullptr;upRgb_[i].Reset();}
     downsamplePass_={};residualPass_={};flowAdaptPass_={};
-    nrInput_.Reset();residualRgba_.Reset();nrFlow_.Reset();baseFlow_.Reset();
+    nrTemporal_.close();nrInput_.Reset();residualRgba_.Reset();nrFlow_.Reset();baseFlow_.Reset();
     for(unsigned i=0;i<kGeneratedPoolSlots;++i){fgDisable_[i].Reset();fgDisableReadback_[i].Reset();generatedLeases_[i].reset();genFrame_[i].Reset();}for(auto& lease:realLeases_)lease.reset();fgDisableInit_.Reset();
     encPass_ = ComputePass{};
     blitPass_ = ComputePass{};hdrVideoSrPass_={};

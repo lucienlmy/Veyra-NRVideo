@@ -251,6 +251,7 @@ veyra_add_compute_shader(veyra_shader_present_motion PresentMotion)
 veyra_add_compute_shader(veyra_shader_nvof_densify NvofDensify)
 veyra_add_compute_shader(veyra_shader_nr_downsample NrDownsample)
 veyra_add_compute_shader(veyra_shader_nr_residual NrResidualComposite)
+veyra_add_compute_shader(veyra_shader_nr_temporal NrTemporal)
 veyra_add_compute_shader(veyra_shader_flow_adapt FlowAdapt)
 veyra_add_compute_shader(veyra_shader_rgb_nv12 RgbToNv12)
 
@@ -406,7 +407,7 @@ endif()
 # EnhanceGraph (the real GPU chain) needs the NGX + NVOF backends; wire it
 # into veyra_pipeline only when both exist so bare contract builds still work.
 if(TARGET veyra_ngx AND TARGET veyra_nvof AND VEYRA_FFMPEG_ROOT)
-  target_sources(veyra_pipeline PRIVATE src/pipeline/EnhanceGraph.cpp src/core/SceneCadenceAnalyzer.cpp)
+  target_sources(veyra_pipeline PRIVATE src/pipeline/EnhanceGraph.cpp src/pipeline/NrTemporalPass.cpp src/core/SceneCadenceAnalyzer.cpp)
   target_include_directories(veyra_pipeline PRIVATE ${FFMPEG_INCLUDE_DIRS})
   target_link_libraries(veyra_pipeline PRIVATE veyra_ngx veyra_nvof ${FFMPEG_LIBRARIES})
   add_dependencies(veyra_pipeline
@@ -485,7 +486,7 @@ if(VEYRA_FFMPEG_ROOT AND EXISTS "${VEYRA_FFMPEG_ROOT}/include/libavformat/avform
 
   # veyra_sources: product input sources (Playbook R3/R7). MediaFileSource
   # composes veyra_media; no second decode implementation exists.
-  add_dependencies(veyra_pipeline veyra_shader_nr_downsample veyra_shader_nr_residual veyra_shader_flow_adapt)
+  add_dependencies(veyra_pipeline veyra_shader_nr_downsample veyra_shader_nr_residual veyra_shader_nr_temporal veyra_shader_flow_adapt)
   add_library(veyra_sources STATIC
     src/source/NativeCaptureSink.cpp
     src/source/MediaFileSource.cpp

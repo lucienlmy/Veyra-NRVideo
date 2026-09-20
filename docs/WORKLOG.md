@@ -1,5 +1,47 @@
 # Veyra 工作记录
 
+## 2026-09-20 Playback/NR implementation slice
+
+On isolated branch `codex/playback-nr-20260920` from checkpoint commit
+`ed00218`, implemented the authorized first slice from
+`docs/PLAYBACK_SIX_ISSUE_AUDIT_PLAN_2026-09-20.md`:
+
+- Subtitle default now preserves glyph size across one/two-line cues; fitting is
+  explicit and persisted.
+- Fullscreen lock button plus Ctrl+L hides/ignores incidental mouse activity;
+  Esc/F11 exit paths remain.
+- Presentation settings persist Off/Follow-display/Custom output-rate mode and
+  default to Follow-display; a validated 1..1000 FPS custom cap is also
+  available. Follow-display resolves the active
+  monitor's Windows mode and feeds the same cap. Generated candidates that are
+  already one cap slot stale are discarded so they cannot accumulate behind a
+  slower output. The cap uses the existing cadence owner; no extra fixed delay
+  or second pacing loop was added. XeSS/FSR provider-owned swapchains report
+  the cap as unsupported rather than throttling their real-frame input.
+- Added default-off NR temporal residual stabilization with bounded two-texture
+  history, motion-vector reprojection, patch consistency rejection, reset
+  invalidation and explicit UI/config/preset persistence. This is a Veyra
+  implementation adapted from Magpie's GPLv3 motion route, with source
+  provenance retained in the audit plan; it is not yet a hardware quality gate.
+- Added the exact Magpie commit/license attribution to `THIRD_PARTY_NOTICES.md`;
+  no Magpie binary or runtime was copied.
+
+Build command (successful): CMake/Ninja target `veyra veyra_repair_shader_tests`
+with the Visual Studio x64 environment; log
+`E:/项目/Veyra/logs/playback-nr-20260920/build-temporal-env.txt`.
+`veyra_ui_contract_tests`, `veyra_subtitle_overlay_tests`,
+`veyra_subtitle_panel_tests` and `veyra_repair_shader_tests` all exited 0;
+logs are under `E:/项目/Veyra/logs/playback-nr-20260920/`.
+
+The raw fullscreen process test initially lacked app-local runtime DLLs. A
+staged copy using the existing 1.4.3 test package's app-local dependencies then
+passed `scripts/acceptance/fullscreen-lock.py`; evidence is
+`E:/项目/Veyra/tests/playback-nr-20260920/fullscreen-run-current/result.json`.
+The test did not exercise HDR output. No physical Dolby Vision, XeSS controlled
+A/B, projector refresh or affected RTX hardware test was run. No package,
+release or push was performed; the isolated build itself still does not contain
+app-local FFmpeg DLLs.
+
 ## 2026-09-20 Six playback/NR requests: investigation only
 
 User requested investigation and proposals, explicitly no implementation.

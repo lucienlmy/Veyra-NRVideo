@@ -290,7 +290,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
             gd.workWidth=resolution.base.width;gd.workHeight=resolution.base.height;gd.nrWidth=resolution.nr.width;gd.nrHeight=resolution.nr.height;gd.flowWidth=resolution.flow.width;gd.flowHeight=resolution.flow.height;
             const bool nvidiaAdapter=ctx.adapter().isNvidia;
             const bool xessFg=presentSinkFrameGeneration(options.settings.frameGenerationBackend);
-            gd.nrBeforeSr=!isImage&&options.settings.lowLatency&&options.nr&&resolution.srApplied;gd.enableSr=resolution.srApplied&&(nvidiaAdapter||options.settings.videoSrQuality==kVideoSrFsr);gd.videoSrQuality=options.settings.videoSrQuality;gd.enableNr=options.nr&&nvidiaAdapter;gd.nrRuntime=options.settings.nrRuntime;gd.enableFg=options.fg&&(nvidiaAdapter||xessFg);gd.fgMultiplier=options.fgMultiplier;gd.frameGenerationBackend=options.settings.frameGenerationBackend;gd.enableNvofStandalone=gd.enableNr;
+            gd.nrBeforeSr=!isImage&&options.settings.lowLatency&&options.nr&&resolution.srApplied;gd.enableSr=resolution.srApplied&&(nvidiaAdapter||options.settings.videoSrQuality==kVideoSrFsr);gd.videoSrQuality=options.settings.videoSrQuality;gd.enableNr=options.nr&&nvidiaAdapter;gd.nrRuntime=options.settings.nrRuntime;gd.nrTemporal=options.settings.nrTemporal;gd.enableFg=options.fg&&(nvidiaAdapter||xessFg);gd.fgMultiplier=options.fgMultiplier;gd.frameGenerationBackend=options.settings.frameGenerationBackend;gd.enableNvofStandalone=gd.enableNr;
             gd.noFeatures=false;gd.model=options.settings.model;gd.residual=options.settings.residual;gd.protection=options.settings.protection;gd.color=options.settings.color;gd.settingsRevision=options.settings.revision;gd.flowQuality=options.settings.flow;gd.contentRate=options.settings.content;
             gd.opticalFlowBackend=options.settings.opticalFlowBackend;gd.amdFlowHalfResolution=options.settings.amdFlowHalfResolution;
             gd.videoHdr=options.settings.videoHdr;
@@ -800,11 +800,11 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                     const bool nvidiaAdapter=ctx.adapter().isNvidia;
                     const bool xessFg=presentSinkFrameGeneration(next.settings.frameGenerationBackend);
                     nextDesc.nrBeforeSr=!isImage&&requested.lowLatency&&requested.nr&&plan.srApplied;nextDesc.enableSr=plan.srApplied&&(nvidiaAdapter||next.settings.videoSrQuality==kVideoSrFsr);nextDesc.videoSrQuality=next.settings.videoSrQuality;nextDesc.enableNr=next.nr&&nvidiaAdapter;nextDesc.nrRuntime=next.settings.nrRuntime;nextDesc.enableFg=next.fg&&(nvidiaAdapter||xessFg);nextDesc.fgMultiplier=next.fgMultiplier;nextDesc.frameGenerationBackend=next.settings.frameGenerationBackend;nextDesc.enableNvofStandalone=nextDesc.enableNr;
-                    nextDesc.model=requested.model;nextDesc.residual=requested.residual;nextDesc.protection=requested.protection;nextDesc.color=requested.color;nextDesc.settingsRevision=requested.revision;nextDesc.flowQuality=requested.flow;nextDesc.contentRate=requested.content;
+                    nextDesc.model=requested.model;nextDesc.nrTemporal=requested.nrTemporal;nextDesc.residual=requested.residual;nextDesc.protection=requested.protection;nextDesc.color=requested.color;nextDesc.settingsRevision=requested.revision;nextDesc.flowQuality=requested.flow;nextDesc.contentRate=requested.content;
                     nextDesc.opticalFlowBackend=requested.opticalFlowBackend;nextDesc.amdFlowHalfResolution=requested.amdFlowHalfResolution;
                     nextDesc.videoHdr=requested.videoHdr;
                     nextDesc.hdrOutput=requested.useHdrPreview(nextDesc.hdrInput,gfx::PresentSink::hdrDisplayActive(window));
-                    const bool rebuild=gd.videoHdr.enabled!=nextDesc.videoHdr.enabled||(!nvidiaAdapter&&(next.nr||next.sr||(next.fg&&!xessFg)))||gd.hdrOutput!=nextDesc.hdrOutput||previous.captureCompatible!=requested.captureCompatible||gd.nrRuntime!=nextDesc.nrRuntime||gd.opticalFlowBackend!=nextDesc.opticalFlowBackend||gd.amdFlowHalfResolution!=nextDesc.amdFlowHalfResolution||gd.enableNr!=nextDesc.enableNr||gd.color.enabled!=nextDesc.color.enabled||gd.color.lutNameString()!=nextDesc.color.lutNameString()||gd.enableFg!=nextDesc.enableFg||gd.frameGenerationBackend!=nextDesc.frameGenerationBackend||gd.fgMultiplier!=nextDesc.fgMultiplier||gd.videoSrQuality!=nextDesc.videoSrQuality||gd.flowQuality!=nextDesc.flowQuality||gd.nrBeforeSr!=nextDesc.nrBeforeSr||gd.workWidth!=nextDesc.workWidth||gd.workHeight!=nextDesc.workHeight||gd.nrWidth!=nextDesc.nrWidth||gd.nrHeight!=nextDesc.nrHeight||gd.flowWidth!=nextDesc.flowWidth||gd.flowHeight!=nextDesc.flowHeight;
+                    const bool rebuild=gd.videoHdr.enabled!=nextDesc.videoHdr.enabled||gd.nrTemporal!=nextDesc.nrTemporal||(!nvidiaAdapter&&(next.nr||next.sr||(next.fg&&!xessFg)))||gd.hdrOutput!=nextDesc.hdrOutput||previous.captureCompatible!=requested.captureCompatible||gd.nrRuntime!=nextDesc.nrRuntime||gd.opticalFlowBackend!=nextDesc.opticalFlowBackend||gd.amdFlowHalfResolution!=nextDesc.amdFlowHalfResolution||gd.enableNr!=nextDesc.enableNr||gd.color.enabled!=nextDesc.color.enabled||gd.color.lutNameString()!=nextDesc.color.lutNameString()||gd.enableFg!=nextDesc.enableFg||gd.frameGenerationBackend!=nextDesc.frameGenerationBackend||gd.fgMultiplier!=nextDesc.fgMultiplier||gd.videoSrQuality!=nextDesc.videoSrQuality||gd.flowQuality!=nextDesc.flowQuality||gd.nrBeforeSr!=nextDesc.nrBeforeSr||gd.workWidth!=nextDesc.workWidth||gd.workHeight!=nextDesc.workHeight||gd.nrWidth!=nextDesc.nrWidth||gd.nrHeight!=nextDesc.nrHeight||gd.flowWidth!=nextDesc.flowWidth||gd.flowHeight!=nextDesc.flowHeight;
                     bool accepted=ring.drainQueue();out={};hasOutput=false;
                     resetRecord->rebuilt=rebuild;
                     markResetStage(diagnostics::ResetStage::Drain);
@@ -1320,12 +1320,23 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                                 const auto due=cadence.due(optionalNow+int64_t((itemPtsMs-nowMs())*10000),interval,20);
                                 if(optionalNow<due)return {State::Pending,due};
                             }
-                            if(presentationEffective.enabled){
+                            if(presentationEffective.enabled||presentationEffective.outputRate==OutputRateMode::Custom){
                                 const auto interval=std::max<int64_t>(1,int64_t(sourceIntervalMs*10000)/std::max(1u,batch.batch.count));
                                 const auto mediaDeadline=isCapture?timeline.deadline(item.pts100ns):fileAwaitingVideo?optionalNow:optionalNow+int64_t((itemPtsMs-nowMs())*10000);
                                 const unsigned catchUpPercent=!isCapture&&options.fg&&!presentSinkFrameGeneration(options.settings.frameGenerationBackend)?20:10;
-                                const auto due=presentationEffective.mode==PacingMode::Even?cadence.due(mediaDeadline,interval,catchUpPercent):mediaDeadline;
-                                if(generated&&presentationEffective.mode==PacingMode::Even&&due>mediaDeadline+interval){++s.dropped;++s.handled;++s.next;s.deadlineStart.reset();continue;}
+                                auto due=presentationEffective.enabled&&presentationEffective.mode==PacingMode::Even?cadence.due(mediaDeadline,interval,catchUpPercent):mediaDeadline;
+                                int64_t capInterval=0;
+                                if(presentationEffective.outputRate==OutputRateMode::Custom){
+                                    capInterval=std::max<int64_t>(1,int64_t(10000000.0/presentationEffective.customFps));
+                                    due=std::max(due,cadence.rateDue(optionalNow,capInterval));
+                                }
+                                // The cap selects displayed candidates, never
+                                // changes processing/FG history or media time.
+                                // If the next candidate is due before this
+                                // slot, discard this stale display opportunity
+                                // instead of accumulating latency.
+                                if(capInterval>0&&due>=mediaDeadline+interval){++s.dropped;++s.handled;++s.next;s.deadlineStart.reset();continue;}
+                                if(generated&&presentationEffective.enabled&&presentationEffective.mode==PacingMode::Even&&due>mediaDeadline+interval){++s.dropped;++s.handled;++s.next;s.deadlineStart.reset();continue;}
                                 if(optionalNow<due)return {State::Pending,due};
                                 if(!presenter.presentationReady())return {State::Pending,optionalNow+2000};
                             }

@@ -197,3 +197,34 @@ build and relevant regression results. No automatic FG downshift, fixed latency
 cushion, NR multipass default, runtime substitution or global color adjustment is
 part of this proposal. User hardware acceptance remains separate from local tests.
 This audit performed no application build or functional acceptance test.
+
+## Implementation status in codex/playback-nr-20260920
+
+The user subsequently authorized implementation. The current isolated worktree
+contains the first reversible slice:
+
+- Subtitles now preserve the selected font size by default. The old fit loop is
+  behind an explicit `自动缩小字号以适应目标行数` option and is covered by the
+  overlay/panel tests.
+- Fullscreen has an explicit lock button and Ctrl+L toggle. Mouse activity is
+  ignored while locked; Esc/F11 remain exit paths. The lock does not alter HDR
+  state or rebuild the graph.
+- Presentation settings now persist an independent output-rate mode and custom
+  FPS (the default is Follow-display). The custom cap is enforced in the existing cadence owner, without a
+  fixed latency cushion. Follow-display resolves the active Windows monitor
+  mode and uses that same cap; generated candidates that are already stale are
+  skipped to prevent queue growth. XeSS/FSR provider-owned swapchains report
+  the cap as unsupported instead of throttling their real-frame input.
+- NR has an opt-in temporal residual stabilization switch. It keeps a bounded
+  two-texture history, reprojects it with the existing motion field, rejects
+  inconsistent 3x3 patches and resets on discontinuity. It is a small Veyra
+  integration adapted from Magpie's open motion route, not a claim of
+  source-identical behavior. It is not enabled by default and has no real RTX
+  image-quality acceptance yet.
+
+Not implemented in this slice: Dolby Vision P5/RPU reconstruction and a proven
+XeSS jelly reduction. The current code already supports compatible DV base-layer
+routes; P5 requires the separate metadata/color reconstruction project above.
+XeSS remains at the controlled-A/B stage because changing sharpening or flow
+without evidence would risk worsening the 30/40/50-series paths. No runtime DLL
+was replaced or added.

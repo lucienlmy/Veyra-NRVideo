@@ -6,6 +6,7 @@
 
 #include <format>
 #include <chrono>
+#include <vector>
 
 #include "veyra/Log.h"
 #include "veyra/diagnostics/CpuStallTrace.h"
@@ -28,6 +29,28 @@ bool PresentSink::hdrDisplayActive(HWND window){
             if(SUCCEEDED(advanced->GetDesc1(&desc))&&desc.Monitor==monitor)return desc.ColorSpace==DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
         }
     }return false;
+}
+
+double PresentSink::displayRefreshFps(HWND window){
+    MONITORINFOEXW mi{};mi.cbSize=sizeof(mi);
+    const auto monitor=MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST);
+    if(!monitor||!GetMonitorInfoW(monitor,&mi))return 0;
+    UINT32 pathCount=0,modeCount=0;
+    if(GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS,&pathCount,&modeCount)==ERROR_SUCCESS){
+        std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+        std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+        if(QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS,&pathCount,paths.data(),&modeCount,modes.data(),nullptr)==ERROR_SUCCESS){
+            for(UINT32 i=0;i<pathCount;++i){const auto& path=paths[i];
+                DISPLAYCONFIG_SOURCE_DEVICE_NAME name{};name.header.type=DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;name.header.size=sizeof(name);name.header.adapterId=path.sourceInfo.adapterId;name.header.id=path.sourceInfo.id;
+                if(DisplayConfigGetDeviceInfo(&name.header)==ERROR_SUCCESS&&wcscmp(name.viewGdiDeviceName,mi.szDevice)==0&&path.targetInfo.refreshRate.Denominator&&path.targetInfo.refreshRate.Numerator)
+                    return double(path.targetInfo.refreshRate.Numerator)/path.targetInfo.refreshRate.Denominator;
+            }
+        }
+    }
+    DEVMODEW mode{};mode.dmSize=sizeof(mode);
+    if(!EnumDisplaySettingsExW(mi.szDevice,ENUM_CURRENT_SETTINGS,&mode,0)||mode.dmDisplayFrequency==0)return 0;
+    // Older/remote drivers may expose only the integer fallback.
+    return double(mode.dmDisplayFrequency);
 }
 
 PresentSink::~PresentSink()

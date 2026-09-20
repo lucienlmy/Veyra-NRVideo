@@ -1,15 +1,19 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
 namespace veyra::engine {
 enum class PacingMode : unsigned { LowQueue, Even, Reflex };
 enum class DisplaySync : unsigned { Tearing, Vsync, Automatic };
+enum class OutputRateMode : unsigned { Off, FollowDisplay, Custom };
 struct PresentationSettings {
     bool enabled=false;
     PacingMode mode=PacingMode::LowQueue;
     DisplaySync display=DisplaySync::Tearing;
+    OutputRateMode outputRate=OutputRateMode::FollowDisplay;
+    double customFps=60.0;
     bool operator==(const PresentationSettings&) const = default;
-    bool valid()const{return unsigned(mode)<=2&&unsigned(display)<=2;}
+    bool valid()const{return unsigned(mode)<=2&&unsigned(display)<=2&&unsigned(outputRate)<=2&&std::isfinite(customFps)&&customFps>=1.0&&customFps<=1000.0;}
 };
 // Media time remains the authority. Spacing adds at most one interval from
 // the current decision; stale generated frames are discarded by the caller.
@@ -27,5 +31,6 @@ public:
         return std::max(mediaDeadline,last_+outputInterval-recovery);
     }
     void submitted(int64_t now){last_=now;}
+    int64_t rateDue(int64_t now,int64_t interval)const{return !last_||interval<=0?now:last_+interval;}
 };
 }

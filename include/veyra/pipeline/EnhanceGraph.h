@@ -1,6 +1,7 @@
 #pragma once
 #include "veyra/engine/BackendRecovery.h"
 #include "veyra/pipeline/ColorGradeTables.h"
+#include "veyra/pipeline/NrTemporalPass.h"
 
 // EnhanceGraph - the real unified processing graph (Playbook R3.2).
 // Chains, per real frame:
@@ -75,6 +76,7 @@ struct EnhanceGraphDesc {
     bool enableNr = true;
     bool nrBeforeSr = false;
     engine::NrRuntime nrRuntime=engine::NrRuntime::Original;
+    bool nrTemporal=false;
     bool enableFg = true;
     bool validateMotion = true; // disable only in isolated legacy A/B diagnostics
     bool enableNvofStandalone = false; // run NVOF+densify per frame without FG (quality core)
@@ -352,6 +354,7 @@ private:
     ComPtr<ID3D12Resource> videoSrInput_,videoSrOutput_;
     ComPtr<ID3D12Resource> videoHdrInput_,videoHdrOutput_;
     ComPtr<ID3D12Resource> nrInput_,residualRgba_,nrFlow_,baseFlow_;
+    NrTemporalPass nrTemporal_;
     ComPtr<ID3D12Resource> presentMotion_[2];
     bool presentMotionValid_[2]={};
     uint64_t motionPreviousSource_[2]={},previousSource_=0;

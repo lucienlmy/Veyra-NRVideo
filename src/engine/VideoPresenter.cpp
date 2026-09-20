@@ -255,9 +255,22 @@ void VideoPresenter::close(){
 }
 PresentationSettings VideoPresenter::configurePresentation(gfx::D3D12DeviceContext& ctx,PresentationSettings requested,bool fg,std::wstring& status){
     const bool reflexDisabled=reflex_.disable();reflexFrame_=0;
+    const bool followDisplay=requested.outputRate==OutputRateMode::FollowDisplay;
+    if(followDisplay){
+        const double hz=gfx::PresentSink::displayRefreshFps(sink_.hwnd());
+        if(hz>=1.0&&std::isfinite(hz)){requested.outputRate=OutputRateMode::Custom;requested.customFps=hz;}
+        else requested.outputRate=OutputRateMode::Off;
+    }
     auto effective=requested;
+    std::wstring capNotice;
+    if((xessActive()||fsrActive())&&requested.outputRate!=OutputRateMode::Off){
+        // Provider owns generated Present calls. Capping our real-frame input
+        // would change the source cadence, not cap its final output.
+        effective.outputRate=OutputRateMode::Off;
+        capNotice=L" · 此补帧提供方暂不支持独立输出限帧；已保留设置";
+    }
     if(!reflexDisabled){effective.enabled=false;sink_.configurePacing(false,false);status=L"Reflex 驱动状态撤销失败；应用等待已停用，请关闭视频后重试";return effective;}
-    if(!requested.enabled){const bool restored=sink_.configurePacing(false,false);status=restored?L"帧同步已关闭":L"应用等待已关闭，但显示队列恢复失败；请关闭视频后重试";return effective;}
+    if(!requested.enabled){const bool restored=sink_.configurePacing(false,false);status=restored?L"帧同步已关闭":L"应用等待已关闭，但显示队列恢复失败；请关闭视频后重试";if(effective.outputRate==OutputRateMode::Custom)status+=std::format(L" · 输出上限 {:.3f} FPS",effective.customFps);status+=capNotice;return effective;}
     if(xessActive()||fsrActive()){
         effective.enabled=false;
         const bool vsync=xessActive()&&requested.display!=DisplaySync::Tearing;
@@ -265,6 +278,7 @@ PresentationSettings VideoPresenter::configurePresentation(gfx::D3D12DeviceConte
         if(fsrActive()){effective.display=DisplaySync::Tearing;status=L"FSR 提供方调度；显示同步暂不支持";}
         else status=vsync?L"XeSS 提供方调度 · 垂直同步":L"XeSS 提供方调度 · 允许撕裂";
         if(xessActive()&&requested.display==DisplaySync::Automatic)status+=L"（自动；VRR 状态未知）";
+        status+=capNotice;
         return effective;
     }
     if(!sink_.configurePacing(true,requested.display!=DisplaySync::Tearing)){effective.enabled=false;status=L"显示队列控制不可用，已回退原呈现方式";return effective;}
@@ -273,6 +287,8 @@ PresentationSettings VideoPresenter::configurePresentation(gfx::D3D12DeviceConte
         if(fg||!reflex_.enable(ctx.device())){effective.mode=PacingMode::LowQueue;status=fg?L"补帧运行：Reflex 暂用低排队（保留补帧倍率）":L"Reflex 初始化失败，已回退低排队";return effective;}
     }
     status=effective.mode==PacingMode::Reflex?L"NVIDIA Reflex · 实验":effective.mode==PacingMode::Even?L"均匀呈现":L"低排队";
+    if(followDisplay)status+=std::format(L" · 输出跟随显示器 ({:.0f} Hz)",requested.customFps);
+    else if(requested.outputRate==OutputRateMode::Custom)status+=std::format(L" · 输出上限 {:.3f} FPS",requested.customFps);
     if(requested.display==DisplaySync::Automatic)status+=L" · 自动：垂直同步（VRR 状态未知）";
     else if(requested.display==DisplaySync::Vsync)status+=L" · 垂直同步";
     else status+=L" · 允许撕裂";

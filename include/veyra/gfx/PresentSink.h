@@ -26,6 +26,7 @@ using ComPtr = Microsoft::WRL::ComPtr<T>;
 class PresentSink {
 public:
     static bool hdrDisplayActive(HWND);
+    static double displayRefreshFps(HWND);
     PresentSink() = default;
     ~PresentSink();
 

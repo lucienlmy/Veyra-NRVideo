@@ -6,7 +6,7 @@
 namespace veyra::ui {
 struct SubtitleSettings {
     int pixels=22,margin=0,offset=0,lines=2,font=0;
-    bool outline=true,background=false;
+    bool outline=true,background=false,fitToLines=false;
 };
 namespace subtitlePanel {
 inline HWND window=nullptr;
@@ -37,7 +37,7 @@ inline LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l){
         number(L"字号",101,16,s->settings.pixels,16,56);
         number(L"底部距离",102,58,s->settings.margin,0,240);
         number(L"主字幕延时 (ms)",103,100,s->settings.offset,-30000,30000);
-        number(L"目标行数 (0 = 自动)",104,142,s->settings.lines,0,8);
+        number(L"缩放目标行数 (0 = 自动)",104,142,s->settings.lines,0,8);
         HWND outline=control(L"BUTTON",L"描边",105,BS_AUTOCHECKBOX|WS_TABSTOP,16,188,124,30);
         HWND background=control(L"BUTTON",L"背景条",106,BS_AUTOCHECKBOX|WS_TABSTOP,160,188,138,30);
         SendMessageW(outline,BM_SETCHECK,s->settings.outline?BST_CHECKED:BST_UNCHECKED,0);
@@ -46,6 +46,9 @@ inline LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l){
         HWND font=control(L"COMBOBOX",L"",107,CBS_DROPDOWNLIST|WS_TABSTOP|WS_VSCROLL,100,232,198,220);
         for(const auto* name:{L"字幕原字体",L"SimHei",L"SimSun",L"DengXian",L"Arial",L"Segoe UI"})SendMessageW(font,CB_ADDSTRING,0,LPARAM(name));
         SendMessageW(font,CB_SETCURSEL,s->settings.font,0);
+        HWND fit=control(L"BUTTON",L"自动缩小字号以适应目标行数",108,BS_AUTOCHECKBOX|WS_TABSTOP,16,274,282,30);
+        SendMessageW(fit,BM_SETCHECK,s->settings.fitToLines?BST_CHECKED:BST_UNCHECKED,0);
+        EnableWindow(GetDlgItem(h,104),s->settings.fitToLines);EnableWindow(GetDlgItem(h,124),s->settings.fitToLines);
         s->populating=false;return 0;
     }
     if(msg==WM_DPICHANGED){
@@ -73,6 +76,7 @@ inline LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l){
         }else if((id==105||id==106)&&notification==BN_CLICKED){
             (id==105?s->settings.outline:s->settings.background)=IsDlgButtonChecked(h,id)==BST_CHECKED;changed=true;
         }else if(id==107&&notification==CBN_SELCHANGE){s->settings.font=int(SendDlgItemMessageW(h,id,CB_GETCURSEL,0,0));changed=true;}
+        else if(id==108&&notification==BN_CLICKED){s->settings.fitToLines=IsDlgButtonChecked(h,id)==BST_CHECKED;EnableWindow(GetDlgItem(h,104),s->settings.fitToLines);EnableWindow(GetDlgItem(h,124),s->settings.fitToLines);changed=true;}
         if(changed&&s->changed)s->changed(s->settings);
         return 0;
     }
@@ -86,7 +90,7 @@ inline void showSubtitleSettings(HWND owner,SubtitleSettings settings,std::funct
     if(subtitlePanel::window){ShowWindow(subtitlePanel::window,SW_SHOWNORMAL);SetForegroundWindow(subtitlePanel::window);return;}
     WNDCLASSW wc{};wc.lpfnWndProc=subtitlePanel::proc;wc.hInstance=GetModuleHandleW(nullptr);wc.lpszClassName=L"VeyraSubtitleSettings";wc.hbrBackground=panelBrush();wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassW(&wc);
     auto* state=new subtitlePanel::State;state->settings=settings;state->changed=std::move(changed);
-    RECT r{0,0,dip(owner,314),dip(owner,282)};AdjustWindowRectExForDpi(&r,WS_CAPTION|WS_SYSMENU,FALSE,WS_EX_TOOLWINDOW,layoutDpi(owner));
+    RECT r{0,0,dip(owner,314),dip(owner,322)};AdjustWindowRectExForDpi(&r,WS_CAPTION|WS_SYSMENU,FALSE,WS_EX_TOOLWINDOW,layoutDpi(owner));
     RECT p{};GetWindowRect(owner,&p);
     MONITORINFO monitor{sizeof(monitor)};GetMonitorInfoW(MonitorFromWindow(owner,MONITOR_DEFAULTTONEAREST),&monitor);
     const int width=r.right-r.left,height=r.bottom-r.top;

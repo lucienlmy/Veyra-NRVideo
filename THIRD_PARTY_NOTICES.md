@@ -46,6 +46,18 @@ The provider DLL on disk is never modified, re-signed or renamed; only the mappe
 
 XeSS pacing adaptation (2026-09-19): `include/veyra/gfx/XessPacing.h` and `src/gfx/XessPacing.cpp` also adapt the above pinned OptiScaler `XeFGPacing.h` NoteFrame/PaceFrame/WaitUntil logic: a bounded 15-period median, generated-frame deadlines, and the provider-owned tail limiter condition. Veyra retains its audited call-site hooks, adds synchronized statistics and complete hooked-present-return gap measurements, and does not port upstream timestamp hooks. Provider scheduling remains preferred; wall-clock pacing is used only when its scheduler is unavailable. No on-disk runtime changes.
 
+### Magpie NR temporal residual route (2026-09-20)
+
+Veyra's optional `src/pipeline/NrTemporalPass.cpp` and
+`shaders/NrTemporal.hlsl` adapt the motion-guided residual-history design from
+SAOG0721/Magpie, commit
+`3841698348bfb246623d4acf791984c8b68a577b`,
+`src/Magpie.Core/DLSSNRTemporalShader.h` (GPL-3.0). The Veyra version keeps
+the existing D3D12 graph, uses its source motion extent and signed HDR working
+space, and adds its own resource/reset plumbing; it is not a binary or runtime
+copy. The switch is default-off until affected RTX hardware and motion-scene
+quality tests reject ghosting and flicker regressions.
+
 ## AMD FidelityFX Optical Flow
 
 FidelityFX SDK 1.1.4, upstream commit `c6efa6bf7f2027b3ec94f28578bb5965eabb9e55`, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK . The optical-flow and DX12 backend libraries are statically linked. Copyright (C) 2024 Advanced Micro Devices, Inc.; MIT license, reproduced in the package's `licenses/AMD_FIDELITYFX_LICENSE.txt`. This is optical flow, not AMD NR or AMD super resolution.
