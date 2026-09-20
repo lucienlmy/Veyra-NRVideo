@@ -18,6 +18,8 @@ public:
     // Unbuffered capture is ready-driven. A late first callback or clock drift
     // must not turn its source timestamps into a persistent presentation hold.
     int64_t deadline(int64_t pts)const{return paced_?host_+(pts-source_)+delay_:host_;}
+    // The fixed readiness anchor is not an expiry deadline for unpaced input.
+    int64_t cadenceDeadline(int64_t pts,int64_t now)const{return paced_?deadline(pts):now;}
     bool expired(int64_t pts,int64_t now,int64_t tolerance)const{return now>deadline(pts)+tolerance;}
 private:
     uint64_t epoch_=0;int64_t source_=0,host_=0,delay_=0;bool anchored_=false,paced_=true;

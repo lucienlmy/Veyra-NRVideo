@@ -296,7 +296,8 @@ bool EnhanceGraph::initialize(const EnhanceGraphDesc& desc)
     nvofStandalone_ = desc.enableNvofStandalone && !desc.noFeatures;
     if(desc.opticalFlowBackend==engine::OpticalFlowBackend::AmdFidelityFx&&desc.amdFlowHalfResolution){nvofW_=std::max(1u,nvofW_/2);nvofH_=std::max(1u,nvofH_/2);}
     uint64_t budget=0,usage=0;
-    const uint64_t estimate=uint64_t(workW_)*workH_*(fgEnabled_?100:76)+uint64_t(nrW_)*nrH_*32+uint64_t(srcW_)*srcH_*32;
+    const uint64_t temporalBytes=desc_.nrTemporal?uint64_t(desc_.nrBeforeSr?srcW_:workW_)*(desc_.nrBeforeSr?srcH_:workH_)*40:0;
+    const uint64_t estimate=uint64_t(workW_)*workH_*(fgEnabled_?100:76)+uint64_t(nrW_)*nrH_*32+uint64_t(srcW_)*srcH_*32+temporalBytes;
     if(context_.videoMemoryInfo(budget,usage)){
         veyra::log::info("memory",std::format("graph lower-bound={}MiB budget={}MiB usage={}MiB; SDK allocations additional",estimate>>20,budget>>20,usage>>20));
         if(usage>=budget||estimate>budget-usage){veyra::log::error("memory","insufficient adapter budget for requested graph textures");return false;}

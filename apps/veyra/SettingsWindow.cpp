@@ -1148,11 +1148,54 @@ LRESULT CALLBACK holdOriginalProc(HWND h,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR i
     return DefSubclassProc(h,msg,wp,lp);
 }
 
+void layoutEnhancePage(int width){
+    auto place=[&](int id,int x,int y,int w,int height=0){
+        for(auto& entry:items)if(GetDlgCtrlID(entry.h)==id){entry.x=x;entry.y=y;entry.w=w;if(height)entry.height=height;break;}
+    };
+    int y=12;
+    auto row=[&](int id,int height){place(id,12,y,-1);y+=height+8;};
+    // Combo height is the dropdown extent, not its collapsed row height.
+    row(200,36);row(1117,24);row(218,36);row(203,36);
+    row(220,36);row(223,36);row(201,36);
+    const int third=(width-40)/3;
+    for(int i=0;i<3;++i)place(730+i,12+i*(third+8),y,third);
+    y+=44;row(207,36);
+    row(206,36);
+    const int half=(width-32)/2;
+    place(213,12,y,half);place(214,20+half,y,half);y+=44;
+    place(1109,12,y,-1,48);y+=56;
+    place(1123,12,y,176,28);place(222,202,y,-1,28);place(622,12,y+32,-1,16);y+=62;
+    row(1100,24);
+    for(int i=0;i<12;++i){
+        if(i==7)row(1101,24);
+        place(1000+i,12,y,176,28);
+        if(i>=4&&i<=6){
+            const int count=i==4?3:2;
+            for(int j=0;j<count;++j)place(700+(i-4)*10+j,12+j*(third+8),y+28,third);
+            y+=72;
+        }else{place(100+i,202,y,-1,28);place(600+i,12,y+32,-1,16);y+=62;}
+    }
+    place(1102,12,y,-1,70);y+=78;
+    row(1124,24);row(260,36);place(261,12,y,-1,28);y+=36;
+    for(int i=0;i<3;++i)place(262+i,12+i*(third+8),y,third);
+    y+=52;row(230,32);place(1145,12,y,-1,52);y+=60;
+    for(int i=0;i<4;++i){
+        place(1141+i,12,y,160,24);place(1131+i,182,y,-1,24);
+        place(631+i,12,y+26,-1,24);y+=58;
+    }
+}
+
 void arrange(){
     if(!window||!body)return;RECT r{};GetClientRect(window,&r);int width=MulDiv(r.right,96,veyra::ui::layoutDpi(window)),height=MulDiv(r.bottom,96,veyra::ui::layoutDpi(window));
     const int sticky=128,viewport=std::max(1,height-sticky);contentHeight=0;
     // The child still has its previous size until SetWindowPos below.
     if(page==2)layoutColorPage(width);
+    if(page==0)layoutEnhancePage(width);
+    if(page==1)for(auto& entry:items){
+        const auto id=GetDlgCtrlID(entry.h);
+        if(id==244){entry.x=12;entry.w=std::max(80,width-68);}
+        if(id==1147){entry.x=width-48;entry.w=36;}
+    }
     for(const auto& [id,row]:rowResets){
         auto findItem=[&](int control)->Item&{return *std::find_if(items.begin(),items.end(),[&](const Item& entry){return GetDlgCtrlID(entry.h)==control;});};
         auto& value=findItem(row.value);auto& reset=findItem(id);auto& label=findItem(row.label);
@@ -1162,7 +1205,7 @@ void arrange(){
     }
     int helpHeight=0;
     if(smoothMotionHelpExpanded){auto dc=GetDC(window);auto old=SelectObject(dc,font);RECT textRect{0,0,dip(window,std::max(1,width-24)),0};DrawTextW(dc,smoothMotionHelp,-1,&textRect,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,old);ReleaseDC(window,dc);helpHeight=MulDiv(textRect.bottom,96,layoutDpi(window))+16;}
-    const auto helpOffset=[&](const Item& entry){const auto id=GetDlgCtrlID(entry.h);return entry.page==1&&(id==1114||id==205||id==1110||id==240||id==241||id==242||id==1150)?helpHeight:0;};
+    const auto helpOffset=[&](const Item& entry){const auto id=GetDlgCtrlID(entry.h);return entry.page==1&&(id==1114||id==205||id==1110||id==240||id==241||id==242||id==243||id==244||id==1147||id==1150)?helpHeight:0;};
     for(auto& entry:items){if(GetDlgCtrlID(entry.h)==1120)entry.height=helpHeight;
         if(entry.page==page&&!entry.hidden&&(GetDlgCtrlID(entry.h)!=1120||smoothMotionHelpExpanded)){wchar_t cls[32]{};GetClassNameW(entry.h,cls,32);contentHeight=std::max(contentHeight,entry.y+helpOffset(entry)+(_wcsicmp(cls,L"COMBOBOX")==0?36:entry.height)+12);}}
     if(page==2)contentHeight=std::max(contentHeight,colorPageContentHeight);
@@ -1171,7 +1214,7 @@ void arrange(){
     auto batch=BeginDeferWindowPos(int(items.size()));
     for(auto& entry:items){bool fixed=entry.page==-1,visible=!entry.hidden&&(entry.page==page||fixed)&&(GetDlgCtrlID(entry.h)!=1120||smoothMotionHelpExpanded);int w=entry.w<0?width-entry.x-12:entry.w;int y=fixed?(GetDlgCtrlID(entry.h)==400?0:(GetDlgCtrlID(entry.h)==211||GetDlgCtrlID(entry.h)==219)?86:42):entry.y+helpOffset(entry)-scroll;
         if(fixed){SetWindowPos(entry.h,nullptr,dip(window,entry.x),dip(window,y),dip(window,std::max(1,w)),dip(window,42),SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOREDRAW);continue;}batch=DeferWindowPos(batch,entry.h,nullptr,dip(window,entry.x),dip(window,y),dip(window,std::max(1,w)),dip(window,entry.height),SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOREDRAW|SWP_NOCOPYBITS|(visible?SWP_SHOWWINDOW:SWP_HIDEWINDOW));}
-    EndDeferWindowPos(batch);RedrawWindow(body,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN);InvalidateRect(window,nullptr,FALSE);
+    EndDeferWindowPos(batch);RedrawWindow(body,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_UPDATENOW);InvalidateRect(window,nullptr,FALSE);
 }
 
 HWND add(const wchar_t* cls,const wchar_t* text,int id,DWORD style,int group,int x,int y,int width,int height){auto h=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|style,0,0,1,1,group==-1?window:body,reinterpret_cast<HMENU>(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(h,WM_SETFONT,WPARAM(font),TRUE);themeControl(h);if(group!=-1)SetWindowSubclass(h,scrollOnly,950,0);items.push_back({h,group,x,y,width,height});return h;}
@@ -1233,18 +1276,18 @@ switch(msg){
 case WM_CREATE:{window=h;font=makeFont(h);items.clear();displayedBackendWarning.clear();smoothMotionHelpExpanded=false;
     WNDCLASSW bodyClass{};bodyClass.lpfnWndProc=bodyProc;bodyClass.hInstance=GetModuleHandleW(nullptr);bodyClass.lpszClassName=L"VeyraInspectorBody";bodyClass.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassW(&bodyClass);
     // Composite only the scrolling controls, never the video/swapchain window.
-    body=CreateWindowExW(WS_EX_CONTROLPARENT,bodyClass.lpszClassName,L"滚动参数",WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS,0,88,300,300,h,nullptr,bodyClass.hInstance,nullptr);
-    add(L"BUTTON",L"实验性 NVIDIA NR 降噪 / 增强",200,BS_AUTOCHECKBOX|WS_TABSTOP,0,12,12,-1,36);
+    body=CreateWindowExW(WS_EX_CONTROLPARENT|WS_EX_COMPOSITED,bodyClass.lpszClassName,L"滚动参数",WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS,0,88,300,300,h,nullptr,bodyClass.hInstance,nullptr);
+    add(L"BUTTON",L"实验性 NVIDIA NR 增强",200,BS_AUTOCHECKBOX|WS_TABSTOP,0,12,12,-1,36);
     add(L"BUTTON",L"超分辨率",201,BS_AUTOCHECKBOX|WS_TABSTOP,0,12,56,-1,36);
     combo(203,0,104,{L"1080p NR · 实时默认",L"原生NR · 高性能成本",L"480p NR",L"720p NR",L"900p NR",L"1440p NR"});
-    add(L"STATIC",L"NR 降噪模型参数",1100,0,0,12,146,-1,24);
+    add(L"STATIC",L"模型参数",1100,0,0,12,146,-1,24);
     for(int i=0;i<12;++i){const int y=174+i*62+(i>=7?32:0);add(L"STATIC",labels[i],1000+i,0,0,12,y,176,28);
-        if(i>=4&&i<=6){const int group=i-4,count=group==0?3:2;for(int j=0;j<count;++j){const auto title=group==0?(j==0?std::wstring(L"003自然"):j==1?std::wstring(L"003电影"):std::wstring(L"003高细节")):j==0?std::wstring(L"关闭"):std::wstring(L"开启");button(title.c_str(),700+group*10+j,0,12+j*88,y+28,80);}continue;}
+        if(i>=4&&i<=6){const int group=i-4,count=group==0?3:2;for(int j=0;j<count;++j){const auto title=group==0?std::to_wstring(j):j==0?std::wstring(L"关闭"):std::wstring(L"开启");button(title.c_str(),700+group*10+j,0,12+j*88,y+28,80);}continue;}
         add(L"EDIT",L"",100+i,ES_AUTOHSCROLL|WS_TABSTOP|ES_RIGHT,0,202,y,-1,28);
         const wchar_t* range=i<3?L"范围：0–1":i==3?L"-1表示默认；其余范围0–2（效果未证实）":L"范围：0–2";SetPropW(item(100+i),L"veyra.tip",HANDLE(range));
         auto slider=add(TRACKBAR_CLASSW,L"",600+i,TBS_HORZ|TBS_NOTICKS|WS_TABSTOP,0,12,y+32,-1,16);SendMessageW(slider,TBM_SETRANGE,TRUE,MAKELPARAM(i==3?-100:0,i<3?100:200));}
     add(L"STATIC",L"增强变化量",1101,0,0,12,606,-1,24);
-    add(L"STATIC",L"003 风格映射：使用 Veyra 当前 NR 接口的 0/1/2 档参数组合；不是把 033 的闭源 DLL 搬进来。",1102,0,0,12,956,-1,52);
+    add(L"STATIC",L"肤质 / 风格 / 遮罩 / UI键为本地实验参数。未验证的效果不会标成可用能力。",1102,0,0,12,956,-1,70);
     button(L"还原默认",211,-1,12,86,88);
     add(L"BUTTON",L"直播兼容 · 实验",219,BS_AUTOCHECKBOX|WS_TABSTOP,-1,108,86,-1,36);
     SetPropW(item(219),L"veyra.tip",HANDLE(L"直播兼容模式：切换显示交换链，会短暂停顿；不改变增强算法或导出。不保证所有捕获方式有效。"));

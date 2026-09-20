@@ -32,5 +32,10 @@ public:
     }
     void submitted(int64_t now){last_=now;}
     int64_t rateDue(int64_t now,int64_t interval)const{return !last_||interval<=0?now:last_+interval;}
+    bool rateSkipsCandidate(int64_t now,int64_t mediaDeadline,int64_t candidateInterval,int64_t capInterval)const{
+        // Discard only while the cap is still ahead of the next opportunity.
+        // An expired media deadline must never prevent a ready frame recovering.
+        return rateDue(now,capInterval)>=std::max(now,mediaDeadline)+candidateInterval;
+    }
 };
 }

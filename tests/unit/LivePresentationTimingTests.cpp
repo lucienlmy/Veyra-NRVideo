@@ -1,9 +1,11 @@
+#define NOMINMAX
 #include "veyra/engine/LivePresentationTiming.h"
 #include "veyra/engine/LivePresentationResetPolicy.h"
 #include "veyra/source/CaptureTiming.h"
 #include "veyra/engine/CaptureHalfRate.h"
 #include "veyra/engine/FrameRateWindow.h"
 #include "veyra/engine/PresentationScheduler.h"
+#include "veyra/engine/PresentationSettings.h"
 #include <cmath>
 #include <limits>
 #include <cstdio>
@@ -12,6 +14,25 @@ int main(){
     int failed=0;
     auto check=[&](bool ok,const char* label){printf("%s %s\n",ok?"PASS":"FAIL",label);if(!ok)++failed;};
     using veyra::engine::CaptureHalfRate;
+    for(int64_t interval:{166667LL,333333LL}){
+        veyra::engine::PresentationScheduler scheduler;
+        veyra::engine::PresentationCadence cadence;
+        scheduler.reset(1,0,1000000,0,false);
+        int presented=0;
+        for(int i=0;i<240;++i){
+            const auto now=1000000+i*interval;
+            const auto due=scheduler.cadenceDeadline(i*interval,now);
+            if(!cadence.rateSkipsCandidate(now,due,interval,interval)){
+                cadence.submitted(now);++presented;
+            }
+        }
+        check(presented==240,"unpaced capture remains presentable after initial anchor");
+        check(!cadence.rateSkipsCandidate(100000000,1000000,interval,interval),"late completion recovers instead of starving on expired media deadline");
+        cadence.submitted(100000000);
+        check(cadence.rateSkipsCandidate(100000001,100000001,interval,interval*4),"active cap still skips candidates before its next slot");
+        cadence.reset();
+        check(!cadence.rateSkipsCandidate(100000001,100000001,interval,interval*4),"reset admits first frame immediately");
+    }
     for(double fps:{60.0,60000.0/1001.0}){
         CaptureHalfRate sampler;const auto dt=int64_t(std::llround(10000000.0/fps));int kept=0;bool ordered=true;
         for(int i=0;i<600;++i){const bool accepted=sampler.accept(i*dt+(i%3-1)*1000,dt,false);kept+=accepted;ordered&=accepted==(i%2==0);}

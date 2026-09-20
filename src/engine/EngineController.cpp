@@ -460,7 +460,6 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
             // late. Export/images/paused frames never enter these paths.
             uint64_t previewSkippedTotal=0,previewSkippedSinceSubmit=0;
             bool previewSkipSinceProcess=false;
-            XessGenerationGate xessGenerationGate;
             // Cumulative provider-submission totals already fed to the frame
             // flow. The AMD provider reports presentation from its own thread,
             // so per-call deltas systematically miss updates that land just
@@ -939,14 +938,8 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                     auto rs=physicalCapture?captureSource.tryRead(pkt,&frame):activeSource->read(pkt,&frame);
                     // Keep the accepted transaction and rollback state alive until
                     // the next real capture sample arrives. Never bind old PTS to now.
-                    const auto transactionWaitStart=Clock::now();
                     while(transaction&&isCapture&&rs==source::SourceReadStatus::Waiting&&!stop_){
                         if(paused_&&cachedFrame){frame=cachedFrame;pkt=cachedPacket;rs=source::SourceReadStatus::Frame;break;}
-                        if(elapsedMs(transactionWaitStart)>2000.0){
-                            veyra::log::error("capture-start",std::format("no first sample after {:.0f} ms during settings transaction; handing off to recovery",elapsedMs(transactionWaitStart)));
-                            rs=source::SourceReadStatus::Error;
-                            break;
-                        }
                         advanceLive();waitLive();rs=physicalCapture?captureSource.tryRead(pkt,&frame):activeSource->read(pkt,&frame);
                     }
                     if(stop_)break;
@@ -1214,7 +1207,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                     // Admission predictions and the XeSS gate must not carry
                     // samples across a settings revision (new backend/dimensions);
                     // soft preview-skip history breaks do NOT reopen them.
-                    if(settingsChanged){xessGenerationGate.reset();presenter.setXessGenerationSuppressed(false);fedXessPresented=fedXessGenerated=fedFsrPresented=fedFsrGenerated=0;}
+                    if(settingsChanged){fedXessPresented=fedXessGenerated=fedFsrPresented=fedFsrGenerated=0;}
                     playbackSpeedLastWall={};
                     if(liveScheduler){liveStats={};liveSubmissions.clear();liveAges.clear();liveWaits.clear();livePresent.clear();livePresentGpu.clear();liveReady.clear();}
                     if(settingsChanged||!completionRates)completionRates=std::make_shared<FrameCompletionRates>(host100ns());
@@ -1328,7 +1321,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                             }
                             if(presentationEffective.enabled||presentationEffective.outputRate==OutputRateMode::Custom){
                                 const auto interval=std::max<int64_t>(1,int64_t(sourceIntervalMs*10000)/std::max(1u,batch.batch.count));
-                                const auto mediaDeadline=isCapture?timeline.deadline(item.pts100ns):fileAwaitingVideo?optionalNow:optionalNow+int64_t((itemPtsMs-nowMs())*10000);
+                                const auto mediaDeadline=isCapture?timeline.cadenceDeadline(item.pts100ns,optionalNow):fileAwaitingVideo?optionalNow:optionalNow+int64_t((itemPtsMs-nowMs())*10000);
                                 const unsigned catchUpPercent=!isCapture&&options.fg&&!presentSinkFrameGeneration(options.settings.frameGenerationBackend)?20:10;
                                 auto due=presentationEffective.enabled&&presentationEffective.mode==PacingMode::Even?cadence.due(mediaDeadline,interval,catchUpPercent):mediaDeadline;
                                 int64_t capInterval=0;
@@ -1341,7 +1334,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                                 // If the next candidate is due before this
                                 // slot, discard this stale display opportunity
                                 // instead of accumulating latency.
-                                if(capInterval>0&&due>=mediaDeadline+interval){++s.dropped;++s.handled;++s.next;s.deadlineStart.reset();continue;}
+                                if(capInterval>0&&cadence.rateSkipsCandidate(optionalNow,mediaDeadline,interval,capInterval)){++s.dropped;++s.handled;++s.next;s.deadlineStart.reset();continue;}
                                 if(generated&&presentationEffective.enabled&&presentationEffective.mode==PacingMode::Even&&due>mediaDeadline+interval){++s.dropped;++s.handled;++s.next;s.deadlineStart.reset();continue;}
                                 if(optionalNow<due)return {State::Pending,due};
                                 if(!presenter.presentationReady())return {State::Pending,optionalNow+2000};
@@ -1395,10 +1388,6 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                                     anchor=Clock::now();anchorMs=itemPtsMs;
                                 }
                                 fileAwaitingVideo=false;seekPreviewPending=false;
-                                if(graph.xessEnabled()&&presenter.xessActive()&&xessGenerationGate.observe(nowMs()-itemPtsMs,sourceIntervalMs)){
-                                    presenter.setXessGenerationSuppressed(xessGenerationGate.suppressed());
-                                    veyra::log::info("xess-fg-gate",std::format("event={} revision={} lateMs={:.3f}",xessGenerationGate.suppressed()?"suppress":"resume",item.identity.settingsRevision,nowMs()-itemPtsMs));
-                                }
                             }
                             // Real B owns captureArrival. Generated A/B frames and
                             // paused cached frames must not invent input anchors.

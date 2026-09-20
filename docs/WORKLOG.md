@@ -1,5 +1,17 @@
 # Veyra 工作记录
 
+## 2026-09-21 Corrective audit of playback / NR changes
+
+Checkpoint: `checkpoint/pre-corrective-audit-20260921`; isolated branch
+`codex/playback-nr-20260920`. Findings, corrections, actual tests and unfinished
+items are in `docs/CORRECTIVE_AUDIT_2026-09-21.md`. This supersedes earlier
+overbroad acceptance claims. Build/test output is under
+`E:/项目/Veyra/build/playback-nr-20260920` and
+`E:/项目/Veyra/tests/corrective-audit-20260921`.
+User turned PS5 off; continued validation uses p001.mp4. Video reproduced
+repeated XeSS generation suppression despite successful startup/capture tests.
+No publication or shutdown is part of this corrective audit.
+
 ## 2026-09-21 Complete portable rebuild and actual startup verification
 
 User requested a newly built package after the previous ad-hoc DLL copy did

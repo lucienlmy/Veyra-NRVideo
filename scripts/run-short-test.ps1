@@ -11,7 +11,9 @@ try {
     $prefix=[IO.Path]::GetFullPath($LogPrefix)
     [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($prefix)) | Out-Null
     $quoted=@($Arguments | ForEach-Object { '"' + $_.Replace('"','\"') + '"' })
-    $p=Start-Process -FilePath $path -ArgumentList $quoted -PassThru -WindowStyle Hidden -RedirectStandardOutput ($prefix+'.stdout.log') -RedirectStandardError ($prefix+'.stderr.log')
+    $options=@{FilePath=$path;PassThru=$true;WindowStyle='Hidden';RedirectStandardOutput=($prefix+'.stdout.log');RedirectStandardError=($prefix+'.stderr.log')}
+    if($quoted.Count){$options.ArgumentList=$quoted}
+    $p=Start-Process @options
     $processHandle=$p.Handle
     if(-not $p.WaitForExit($TimeoutSeconds*1000)) {
         Stop-Process -Id $p.Id -Force

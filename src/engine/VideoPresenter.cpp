@@ -170,18 +170,10 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
         // the next continuous frame can interpolate without another warmup.
         const bool enabled=regionVisible&&!generated&&!comparison&&graph.presentMotion(slot)&&graph.presentDepth()&&identity.sourceFrameId!=lastXessIdentity_.sourceFrameId&&!xessGenerationSuppressed_;
         const bool reset=!graph.presentMotionValid(slot)||!xessWasEnabled_||identity.epoch!=lastXessIdentity_.epoch||identity.settingsRevision!=lastXessIdentity_.settingsRevision||graph.motionPreviousSource(slot)!=lastXessIdentity_.sourceFrameId;
-        // XeFG uses frameRenderTime as a cadence hint. Magpie's audited XeFG
-        // path feeds the interval between accepted presents; Veyra used to
-        // hard-code zero, which leaves the provider with no timing information
-        // and can make multi-frame bursts uneven. Use only the measured
-        // interval, clamp resize/stall spikes, and keep the first/reset frame
-        // at zero. This is a hint, not a sleep or a queueing delay.
-        float elapsed=0.0f;
-        if(!reset&&lastXessFrame_!=std::chrono::steady_clock::time_point{}){
-            const double ms=std::chrono::duration<double,std::milli>(now-lastXessFrame_).count();
-            if(std::isfinite(ms)&&ms>0.0)elapsed=std::clamp(float(ms),0.25f,100.0f);
-        }
-        if(veyra::log::verboseFrameLogs())veyra::log::info("xess-fg",std::format("frameRenderTimeMs={:.3f} reset={}",elapsed,reset?1:0));
+        // Present intervals include the provider's own wait. Do not feed that
+        // wait back into its pacing. Intel explicitly permits zero when an
+        // independent frame-time estimate is unavailable.
+        constexpr float elapsed=0.0f;
         auto* motion=graph.presentMotion(slot);
         auto* depth=graph.presentDepth();
         if(enabled){
