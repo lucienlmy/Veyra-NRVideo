@@ -1,5 +1,19 @@
 # Veyra 工作记录
 
+## 2026-09-21 Follow-up scope and repair plan
+
+User closed the general 1.4.3 performance investigation and assigned external
+GPU acceptance to group testers. Local RTX5070 remains the engineering gate.
+Read engine lateness sampling, temporal shader/pass, pinned Magpie VFX path,
+prior acceptance and failed FG experiments. Found the reported ~42 ms is
+absolute media-time deviation sampled after Present return, not directly added
+filter or physical screen latency; sampling identity needs verification.
+Plan: docs/NR_FG_NEXT_REPAIR_PLAN_2026-09-21.md. It covers diagnostics,
+anti-flicker quality, XeSS artifacts/cadence, conditional independent denoise
+and valid local packaging, with bounded experiments and rollback conditions.
+This turn changed documents only. No new runtime tests or performance claims,
+product changes, goal activation, package, publication or shutdown.
+
 ## 2026-09-21 Bounded NR quality/performance result
 
 See docs/NR_QUALITY_PERFORMANCE_ACCEPTANCE_2026-09-21.md for final decisions,
