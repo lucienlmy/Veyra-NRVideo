@@ -28,6 +28,12 @@ struct FrameTraceEvent {
     TraceKind kind=TraceKind::Submitted;
     uint32_t detail=0,count=0;
     double milliseconds=0;
+    // Populated for Present only. All host stamps use the same monotonic clock;
+    // GPU readiness is CPU-observed, never physical display completion.
+    int64_t decodedHost=0,processHost=0,readyHost=0,presentBeginHost=0,presentEndHost=0;
+    double entryDeviationMs=0,returnDeviationMs=0;
+    uint32_t queueDepth=0;
+    bool mediaDeviationValid=false;
 };
 // Owned by the logger, independent of the deduplicated error history. No
 // allocation, formatting or disk I/O occurs when an event is recorded.

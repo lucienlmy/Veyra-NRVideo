@@ -427,7 +427,8 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
             uint64_t activeSeekId=0;
             Clock::time_point seekStarted{};
             uint64_t seekDecoded=0;
-            bool fileAwaitingVideo=true,fileAudioAlignPending=true,fileInputEnded=false;double lastFilePresentedMs=0,lastFilePresentLateness=0;std::deque<double> latenessSamples;
+            bool fileAwaitingVideo=true,fileAudioAlignPending=true,fileInputEnded=false;double lastFilePresentedMs=0,lastFilePresentLateness=0;
+            TimingWindow presentEntryDeviation,presentReturnDeviation;
             if(!isImage&&!isCapture&&audioPipe.open(path)){
                 {std::lock_guard lock(mutex_);snapshot_.audioTracks=audioPipe.tracks();snapshot_.selectedAudioTrack=audioPipe.selectedTrack();}
                 audioPipe.holdForVideo();audioPipe.startThread(&audio,true);audioStarted=true;
@@ -1203,7 +1204,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                     const bool settingsChanged=metricsRevision!=options.settings.revision;
                     metricsRevision=options.settings.revision;metricsEpoch=metricsWindowEpoch;statsStart=Clock::now();statsSourceBase=sourceFrames-uint64_t(!rereadCached);
                     slotWaitBase=processWaitBase;slotWaitMsBase=processWaitMsBase;submitBase=processSubmitBase;
-                    captureAges.clear();scheduleWaits.clear();processTimes.clear();presentTimes.clear();decodeTimes.clear();gpuReadyTimes.clear();for(auto& window:gpuStageTimes)window.clear();lastGpuSampleEnd={};latenessSamples.clear();submissionTimes.clear();submitted=expired=0;
+                    captureAges.clear();scheduleWaits.clear();processTimes.clear();presentTimes.clear();decodeTimes.clear();gpuReadyTimes.clear();for(auto& window:gpuStageTimes)window.clear();lastGpuSampleEnd={};presentEntryDeviation.clear();presentReturnDeviation.clear();submissionTimes.clear();submitted=expired=0;
                     // Admission predictions and the XeSS gate must not carry
                     // samples across a settings revision (new backend/dimensions);
                     // soft preview-skip history breaks do NOT reopen them.
@@ -1340,9 +1341,14 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                                 if(!presenter.presentationReady())return {State::Pending,optionalNow+2000};
                             }
                             const auto waited=elapsedMs(*s.deadlineStart);s.deadlineStart.reset();s.waitMs+=waited;flow->cpu(diagnostics::CpuStage::DeadlineWait,waited,host100ns());
+                            const bool deviationValid=!isCapture&&!isImage&&!fileAwaitingVideo&&!paused_;
+                            const double entryDeviation=deviationValid?nowMs()-itemPtsMs:0;
+                            const auto presentBeginHost=host100ns();
                             const auto begin=Clock::now();const auto before=presenter.submittedCount();
                             presenter.reflexFrame(watch->reflexFrame);
                             if(!presenter.present(ctx,ring,graph,item.lease->slot,generated,item.lease->referencesValid,comparisonMode_,comparisonBase_,comparisonSplit_,item.identity,previewView()))return {State::Failed};
+                            const auto presentEndHost=host100ns();
+                            const double returnDeviation=deviationValid?nowMs()-itemPtsMs:0;
                             item.lease->consumerFence=presenter.consumerFenceValue(ring.lastSignaledValue());const bool didPresent=presenter.submittedCount()>before;s.blit=presenter.blitTiming(ctx.fence());
                             const auto elapsed=elapsedMs(begin);s.presentMs+=elapsed;flow->cpu(diagnostics::CpuStage::Present,elapsed,host100ns());
                             // A soft history reset retains this metrics window. Older
@@ -1356,7 +1362,12 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                                 cadence.submitted(optionalNow);
                                 if(physicalCapture&&veyra::log::verboseFrameLogs())veyra::log::info("capture-present-sample",std::format("source={} epoch={} revision={} batch={} subframe={} generated={} arrival={} arrivalA={} ready={} begin={} end={}",item.identity.sourceFrameId,item.identity.epoch,item.identity.settingsRevision,batch.batch.batchId,item.subframe,generated,captureArrival,lineage?lineage->a.host100ns:0,watch->frameReadyObserved[s.next],optionalNow,host100ns()));
                                 if(veyra::log::verboseFrameLogs())veyra::log::info("pacing-sample",std::format("mode={} enabled={} sync={} pts={} begin={} end={} ready={} process={} generated={} queue={} lateMs={:.3f}",unsigned(presentationEffective.mode),presentationEffective.enabled,unsigned(presentationEffective.display),item.pts100ns,optionalNow,host100ns(),watch->frameReadyObserved[s.next],std::chrono::duration_cast<std::chrono::nanoseconds>(watch->processStart.time_since_epoch()).count()/100,generated,liveScheduler->occupancy(),isCapture?double(optionalNow-timeline.deadline(item.pts100ns))/10000:fileAwaitingVideo?0:nowMs()-itemPtsMs));
-                                traceFrame(diagnostics::TraceKind::Present,item.identity,batch.batch.batchId,item.lease->consumerFence,item.pts100ns,item.subframe,1,elapsed);
+                                diagnostics::FrameTraceEvent event{presentEndHost,runSessionId,item.identity,batch.batch.batchId,item.lease->consumerFence,item.pts100ns,diagnostics::TraceKind::Present,item.subframe,1,elapsed};
+                                event.decodedHost=baselineReady;event.processHost=std::chrono::duration_cast<std::chrono::nanoseconds>(watch->processStart.time_since_epoch()).count()/100;
+                                event.readyHost=watch->frameReadyObserved[s.next];event.presentBeginHost=presentBeginHost;event.presentEndHost=presentEndHost;
+                                event.entryDeviationMs=entryDeviation;event.returnDeviationMs=returnDeviation;event.queueDepth=unsigned(liveScheduler->occupancy());event.mediaDeviationValid=deviationValid;
+                                Logger::instance().recordFrame(event);
+                                if(deviationValid){presentEntryDeviation.add(std::abs(entryDeviation));presentReturnDeviation.add(std::abs(returnDeviation));}
                                 if(veyra::log::verboseFrameLogs())veyra::log::info("submit",std::format("batch={} epoch={} revision={} subframe={} pts100ns={} host100ns={} fence={} (submission, display unmeasured)",batch.batch.batchId,item.identity.epoch,item.identity.settingsRevision,item.subframe,item.pts100ns,host100ns(),item.lease->consumerFence));
                             }
                             // Cumulative alignment: feed whatever the providers reported
@@ -1374,7 +1385,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                                 if(fsrPresented){flow->xessSubmitted(fsrPresented,fsrGenerated,host100ns());fedFsrPresented=fsrPresentedTotal;fedFsrGenerated=fsrGeneratedTotal;}
                             }
                             if(didPresent&&!isCapture){
-                                lastFilePresentedMs=itemPtsMs;lastFilePresentLateness=fileAwaitingVideo?0:nowMs()-itemPtsMs;
+                                lastFilePresentedMs=itemPtsMs;lastFilePresentLateness=returnDeviation;
                                 {std::lock_guard lock(mutex_);if(snapshot_.sessionId==runSessionId&&snapshot_.applied.revision==item.identity.settingsRevision){
                                     if(activeSeekId&&snapshot_.seekPresented!=activeSeekId)veyra::log::info("seek-latency",std::format("request={} firstPresentMs={:.3f} decodedToTarget={} ptsMs={:.3f}",activeSeekId,elapsedMs(seekStarted),seekDecoded,itemPtsMs));
                                     snapshot_.position=itemPtsMs/1000;snapshot_.lateMs=lastFilePresentLateness;snapshot_.seekPresented=activeSeekId;}}
@@ -1460,8 +1471,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 loopTrace.mark("scheduleAndPresent");
                 audioRebuffering=audioStarted&&audioPipe.waitingForVideo();
                 const double lateness=isCapture?0:isImage?nowMs()-pts:lastFilePresentLateness;
-                if(!paused_&&!isCapture){latenessSamples.push_back(std::abs(lateness));if(latenessSamples.size()>1200)latenessSamples.pop_front();}
-                std::vector<double> sorted(latenessSamples.begin(),latenessSamples.end());std::sort(sorted.begin(),sorted.end());
+                // Sample only actual presentations above, not each engine iteration.
                 auto captureStats=physicalCapture?captureSource.metrics():source::CaptureMetrics{};
                 if(isScreen){const auto screen=screenSource.metrics();captureStats.received=screen.received;captureStats.delivered=screen.delivered;captureStats.dropped=screen.dropped;captureStats.readAgeMs=screen.ageMs;captureStats.frameAgeMs=double(std::max<int64_t>(0,host100ns()-pkt.pts.to100ns()))/10000;}
 #ifdef VEYRA_ENABLE_REMOTEPLAY
@@ -1506,7 +1516,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 loopTrace.mark("flowSnapshot");
                 measured.sourceFrames=measured.flow.counters.sourceAccepted;measured.validGenerated=measured.flow.counters.fgReadyValid;measured.submitted=measured.flow.counters.realPresented+measured.flow.counters.generatedPresented;measured.expired=measured.flow.counters.generatedExpiredAfterEval;
                 const double ageP95=liveScheduler?completed.ageP95:captureAges.p95(),waitP95=liveScheduler?completed.waitP95:scheduleWaits.p95(),presentP95=liveScheduler?completed.presentP95:presentTimes.p95();
-                ++frames;{std::lock_guard lock(mutex_);snapshot_.metrics=measured;snapshot_.colorStatus=graph.videoHdrActive()?L"SDR → RTX Video HDR":options.settings.videoHdr.enabled&&!gd.hdrInput?L"SDR → SDR（HDR显示未启用）":gd.hdrOutput?(graph.hdr10Output()?L"HDR → HDR10 / PQ":L"HDR → scRGB / 浮点"):gd.hdrInput?L"HDR → SDR色调映射":L"SDR → SDR";snapshot_.position=(isCapture||isImage?pts:lastFilePresentedMs)/1000;snapshot_.frames=sourceFrames;snapshot_.generated=graphStats.fgGeneratedFrames;snapshot_.lateMs=lateness;snapshot_.lateP95Ms=sorted.empty()?0:sorted[size_t((sorted.size()-1)*0.95)];
+                ++frames;{std::lock_guard lock(mutex_);snapshot_.metrics=measured;snapshot_.colorStatus=graph.videoHdrActive()?L"SDR → RTX Video HDR":options.settings.videoHdr.enabled&&!gd.hdrInput?L"SDR → SDR（HDR显示未启用）":gd.hdrOutput?(graph.hdr10Output()?L"HDR → HDR10 / PQ":L"HDR → scRGB / 浮点"):gd.hdrInput?L"HDR → SDR色调映射":L"SDR → SDR";snapshot_.position=(isCapture||isImage?pts:lastFilePresentedMs)/1000;snapshot_.frames=sourceFrames;snapshot_.generated=graphStats.fgGeneratedFrames;snapshot_.lateMs=lateness;snapshot_.lateP95Ms=presentReturnDeviation.p95();
                     snapshot_.videoHdrStatus=graph.videoHdrActive()?L"预览：SDR 转 HDR 已运行":
                         !options.settings.videoHdr.enabled?L"RTX Video HDR 已关闭":
                         gd.hdrInput?L"原生 HDR 输入，无需 SDR 转 HDR":
@@ -1543,6 +1553,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 if(Clock::now()>=nextTimingLog){const auto [retained,overwritten]=Logger::instance().frameTraceSize();
                     veyra::log::info("frame-trace",std::format("retained={} capacity=8192 overwritten={} (records available in diagnostic preview)",retained,overwritten));}
                 if(!isCapture&&Clock::now()>=nextTimingLog){const double playbackSpeedNow=[&]{std::lock_guard lock(mutex_);return snapshot_.playbackSpeed;}();
+                veyra::log::info("present-deviation",std::format("samples={} entryAbsP95Ms={:.3f} returnAbsP95Ms={:.3f} (one sample per actual submission; media-clock deviation, not scanout latency)",presentReturnDeviation.size(),presentEntryDeviation.p95(),presentReturnDeviation.p95()));
                 {const auto dashboard=frameFlow->snapshot(host100ns());veyra::log::info("output-queue",std::format("pendingFrames={} enhancementProcessingMs={:.3f} extraDelayEstimateMs={:.3f}",dashboard.pendingOutputFrames,dashboard.enhancementProcessing.mean.value_or(-1),dashboard.cpuTiming[size_t(diagnostics::CpuStage::EnhancementDelayEstimate)].mean.value_or(-1)));}
                 veyra::log::info("player-timing",std::format("revision={} decodeP95Ms={:.3f} graphSubmitP95Ms={:.3f} gpuReadyP95Ms={:.3f} presentP95Ms={:.3f} gpuColorP95Ms={:.3f} gpuSrP95Ms={:.3f} gpuFlowP95Ms={:.3f} gpuNrP95Ms={:.3f} gpuResidualP95Ms={:.3f} gpuFgBatchP95Ms={:.3f} gpuBlitP95Ms={:.3f} slotWaits={} slotWaitMs={:.3f} commandSubmits={} displaySubmits={} expiredGenerated={} previewSkipped={} playbackSpeed={:.3f} processed={}",options.settings.revision,decodeTimes.p95(),processTimes.p95(),liveScheduler?completed.readyP95:gpuReadyTimes.p95(),presentP95,gpuP95(diagnostics::GpuStage::Color),gpuP95(diagnostics::GpuStage::Sr),gpuP95(diagnostics::GpuStage::Flow),gpuP95(diagnostics::GpuStage::Nr),gpuP95(diagnostics::GpuStage::Residual),gpuP95(diagnostics::GpuStage::FgBatch),gpuP95(diagnostics::GpuStage::Blit),slotWaitCount,slotWaitMilliseconds,commandSubmits,submitted,expired,measured.flow.counters.previewSkippedBeforeGraph,playbackSpeedNow,sourceFrames-statsSourceBase));nextTimingLog=Clock::now()+std::chrono::seconds(1);}
                 if(isCapture&&Clock::now()>=nextTimingLog){

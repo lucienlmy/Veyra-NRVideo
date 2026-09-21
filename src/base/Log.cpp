@@ -175,7 +175,11 @@ std::string Logger::diagnosticReport(){std::ostringstream o;o<<"Veyra 本地诊�
      <<" Discarded: detail=subframe, count=PreviewFrameReadiness enum, ms=deadline lateness.\n";
     for(const auto& e:trace)o<<"event="<<diagnostics::traceKindName(e.kind)<<" host="<<e.host100ns<<" session="<<e.session
         <<" revision="<<e.identity.settingsRevision<<" epoch="<<e.identity.epoch<<" source="<<e.identity.sourceFrameId
-        <<" batch="<<e.batch<<" fence="<<e.fence<<" pts="<<e.pts100ns<<" detail="<<e.detail<<" count="<<e.count<<" ms="<<e.milliseconds<<'\n';
+        <<" batch="<<e.batch<<" fence="<<e.fence<<" pts="<<e.pts100ns<<" detail="<<e.detail<<" count="<<e.count<<" ms="<<e.milliseconds
+        <<" decodedHost="<<e.decodedHost<<" processHost="<<e.processHost<<" readyHost="<<e.readyHost
+        <<" presentBeginHost="<<e.presentBeginHost<<" presentEndHost="<<e.presentEndHost
+        <<" entryDeviationMs="<<e.entryDeviationMs<<" returnDeviationMs="<<e.returnDeviationMs
+        <<" queueDepth="<<e.queueDepth<<" mediaDeviationValid="<<e.mediaDeviationValid<<'\n';
     return diagnostics::redact(o.str());
 }
 void Logger::flush()

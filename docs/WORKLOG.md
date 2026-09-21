@@ -1,5 +1,52 @@
 # Veyra 工作记录
 
+## 2026-09-21 NR/FG bounded repair and acceptance
+
+Continued from plan checkpoint 09b4ad7, preserving accepted ab7979c.
+Fixed repeated lateness sampling and per-loop quantile sorting; recorded
+actual Present entry/return with host-domain lineage and signed deviation.
+No scheduler wait, downshift, resolution or runtime changes. Added offline
+natural NR quality probe/analysis and local public-API VFX prerequisite probe.
+Full evidence: docs/NR_FG_FOLLOWUP_ACCEPTANCE_2026-09-21.md.
+
+Build: scripts/build-isolated.ps1, worktree playback-nr-20260920, matching
+build directory, MSVC Release/1.4.4beta. First diagnostics build passed.
+Tests use scripts/run-short-test.ps1; 30-second cases have 95-second watchdogs,
+120-second sustained cases 180 seconds. TEMP/TMP only process-local, under
+E:/项目/Veyra/tmp/nr-fg-followup-20260921. Logs and evidence under
+E:/项目/Veyra/{logs,tests}/nr-fg-followup-20260921.
+
+SR-off UI ABBA and actual 1080p-to-4K RTX Video SR tests distinguish media
+deviation from latency. Historical 42 ms is not measured extra filter delay.
+True-SR NR+DLSS: 2X ~120, 4X/6X ~163 submissions/s with ~17 ms gaps.
+True-SR XeSS4 temporal-on remains slower than off. Both combinations remain
+unresolved; no speculative scheduling patch retained. Original-4K SR-bypass
+DLSS4 and XeSS4 temporal-on sustained tests both pass at ~240 software
+submissions/s; XeSS is SDK throughput, not measured individual intervals.
+Three 120-frame natural quality samples pass debug validation and reduce
+stable-source residual variation; no blanket fast-gameplay quality claim.
+Actual released 1.4.3 true-SR run repeatedly suppresses XeSS generation;
+its higher source FPS does not justify reverting the current gate removal.
+
+VFX 1.2.0 official cp311 wheel verified, all 17 DLLs load, CUDA sees RTX5070,
+but VideoSuperRes Create returns -2 before load/inference. One DLL-directory
+correction reproduced it. No independent denoiser added or packaged; stop
+this bounded direction. Corrected prior documentation: modes 8..11 denoise,
+16..19 skip artifact suppression. No proprietary SDK source copied to Git.
+
+Final CPU live timing and UI contracts pass (384 layout cases). Temporal-on
+transport and zoom smokes pass. Protection smoke initially fails visibility
+because its watchdog starts the parent hidden; added ShowWindow in smoke-only
+setup, preserving the real overlay assertion. Rebuild and retest pass:
+ui-protection-temporal-retest.log confirms rectangle/overlay, clear/cancel,
+master-off and dirty-draft retention. Actual professional FG selector tests
+pass normal switching and injected XeSS initialization failure recovery;
+results in final-backends/result.json and final-backends-reject/result.json.
+Final executable SHA256 is
+318C6B0F44ADFC3BD8094DFD5BA39B1570AA56C5D01E9A95BC40430DFD28BDA8.
+Optional PE stack inspection could not run: this build has no linker .map;
+do not claim it passed. No published package, main merge or shutdown.
+
 ## 2026-09-21 Follow-up scope and repair plan
 
 User closed the general 1.4.3 performance investigation and assigned external

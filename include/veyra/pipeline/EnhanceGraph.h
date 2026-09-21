@@ -277,6 +277,10 @@ public:
     ID3D12Resource* confidenceResource() const { return confTex_.Get(); }
     // Test-only borrowed ingress output. Read after process, restore NON_PIXEL_SHADER_RESOURCE.
     ID3D12Resource* diagnosticLinearInput() const { return srcRgba_.Get(); }
+    // Offline diagnostics only. Borrowed after process; restore NON_PIXEL_SHADER_RESOURCE.
+    ID3D12Resource* diagnosticNrBase() const { return desc_.nrBeforeSr?srcRgba_.Get():workRgba_.Get(); }
+    ID3D12Resource* diagnosticNrRaw() const { return desc_.nrTemporal?nrTemporal_.raw():residualRgba_.Get(); }
+    ID3D12Resource* diagnosticNrFiltered() const { return residualRgba_.Get(); }
     // Non-empty when the colour stage refused the referenced LUT (input space
     // does not match the content domain). The engine surfaces this in the
     // status panel so the refusal is visible, not only logged.

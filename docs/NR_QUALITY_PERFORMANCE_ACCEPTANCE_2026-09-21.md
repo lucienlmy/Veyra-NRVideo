@@ -1,5 +1,11 @@
 # NR / XeSS bounded review result
 
+Follow-up correction: the historical 41.71/43.35 ms below is repeatedly sampled
+media-clock deviation after Present, not added filter or screen latency.
+New per-Present measurements, natural-video probes, true-SR limits and the
+official VFX creation failure are recorded in
+[the follow-up acceptance](NR_FG_FOLLOWUP_ACCEPTANCE_2026-09-21.md).
+
 Branch: codex/playback-nr-20260920. Starting checkpoint:
 checkpoint/pre-nr-quality-perf-20260921 (bcdbfbf).
 This closes the bounded local investigation, not universal picture-quality
@@ -50,9 +56,11 @@ the whole-run average. None is physical scanout or screen-to-eye latency.
 The tiled shader matches the corrected non-tiled shader's full-frame FP16
 fingerprints on all 41 test frames. Both test runs pass and report zero D3D12
 debug errors. This proves equality on this corpus only. Natural-video
-flicker/detail/ghosting has NOT passed subjective acceptance. Temporal-on is
-still substantially later than off (off smoke P95 1.65 ms); do not claim
-the feature is free or that its remaining delay is fixed. No further tuning.
+flicker/detail/ghosting has NOT passed subjective acceptance. The historical
+off smoke P95 was 1.65 ms, but its comparison to 41.71 ms did not isolate added
+filter latency. The follow-up's corrected per-Present ABBA measurements
+supersede that interpretation. Actual SR plus temporal still has a measured
+performance penalty; do not claim the feature is free. No further tuning.
 
 ## Release comparison and limits
 

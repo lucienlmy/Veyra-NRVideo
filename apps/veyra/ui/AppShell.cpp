@@ -31,6 +31,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <filesystem>
+#include <fstream>
 #include <format>
 #include "veyra/engine/ColorLookStore.h"
 #include <string>
@@ -1115,7 +1116,10 @@ tickTransportChecks(hwnd,s);
 tickFgOnlyChecks(hwnd,s);
 if(smokeProtection&&startTick&&GetTickCount64()-startTick>1500){
     auto indicator=[&](bool enabled,const wchar_t* count){wchar_t text[128]{},draft[64]{};auto control=veyra::ui::settingsControlForTest(206);GetWindowTextW(control,text,128);GetWindowTextW(veyra::ui::settingsControlForTest(100),draft,64);return (SendMessageW(control,BM_GETCHECK,0,0)==BST_CHECKED)==enabled&&std::wstring(text).find(count)!=std::wstring::npos&&std::wstring(draft)==L"0.42";};
-    if(protectionStep==0&&s.frames){if(uiState.mode==veyra::ui::Mode::Daily)switchMode();if(!transition.running){
+    if(protectionStep==0&&s.frames){
+        // The watchdog launches hidden; child-overlay visibility requires a visible parent.
+        ShowWindow(hwnd,SW_SHOWNORMAL);
+        if(uiState.mode==veyra::ui::Mode::Daily)switchMode();if(!transition.running){
         SetWindowTextW(veyra::ui::settingsControlForTest(100),L"0.42");protectionSession=s.sessionId;auto view=engine.previewView();view.zoom=2;engine.previewView(view);RECT r{};GetClientRect(video,&r);auto e=s.metrics.resolution.output;
         const float scale=std::min(float(r.right)/e.width,float(r.bottom)/e.height)*view.zoom;
         auto pixel=[&](float u,float v){return POINT{LONG(r.right*.5f+(u-view.centerX)*e.width*scale),LONG(r.bottom*.5f+(v-view.centerY)*e.height*scale)};};
@@ -1310,5 +1314,19 @@ if(msg.message==WM_MOUSEWHEEL&&GetAncestor(msg.hwnd,GA_ROOT)==hwnd&&!veyra::ui::
         if(steps){const auto state=engine.snapshot();engine.setVolume(std::clamp(state.volume+steps*.05f,0.0f,1.0f),false);}continue;
     }
 }
-if(veyra::ui::subtitleSettingsDialogMessage(msg)||veyra::ui::screenCaptureDialogMessage(msg)||IsDialogMessageW(hwnd,&msg))continue;TranslateMessage(&msg);DispatchMessageW(&msg);}CoUninitialize();return int(msg.wParam);
+if(veyra::ui::subtitleSettingsDialogMessage(msg)||veyra::ui::screenCaptureDialogMessage(msg)||IsDialogMessageW(hwnd,&msg))continue;TranslateMessage(&msg);DispatchMessageW(&msg);}
+if(smokeSeconds>0){
+    const DWORD size=GetEnvironmentVariableW(L"VEYRA_SMOKE_TRACE_FILE",nullptr,0);
+    if(size){
+        std::wstring path(size,L'\0');
+        const DWORD length=GetEnvironmentVariableW(L"VEYRA_SMOKE_TRACE_FILE",path.data(),size);
+        if(length>0&&length<size){
+            path.resize(length);
+            std::ofstream report{std::filesystem::path(path)};
+            report<<veyra::Logger::instance().diagnosticReport();
+            if(!report)veyra::log::error("app","Failed to write smoke diagnostic report");
+        }
+    }
+}
+CoUninitialize();return int(msg.wParam);
 }

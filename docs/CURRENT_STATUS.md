@@ -1,5 +1,15 @@
 # 当前项目状态 / Current Status
 
+2026-09-21 follow-up: retained temporal mask/time corrections and GPU
+neighborhood reuse; fixed repeated Present-deviation sampling and added
+separate entry/return diagnostics. NR temporal remains default-off.
+Local 120-second DLSS/XeSS 4X tests with original 4K (SR bypass) pass;
+true 1080p-to-4K SR plus NR fails 4X/6X cadence acceptance. Independent
+VFX denoise cannot create its effect and is not integrated. No fixed delay,
+hidden downshift, new runtime, main merge or publication. Detailed results:
+[current follow-up acceptance](NR_FG_FOLLOWUP_ACCEPTANCE_2026-09-21.md).
+This supersedes the timing interpretation and pending tests below.
+
 2026-09-21 local bounded NR/performance review: temporal protection/time fixes
 and shared-neighborhood GPU optimization tested on RTX 5070. Default remains
 off; natural-video visual acceptance and independent VFX denoise are not

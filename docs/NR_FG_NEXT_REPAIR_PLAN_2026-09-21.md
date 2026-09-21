@@ -28,7 +28,8 @@ fixed presentation holdback, resolution reduction or blur as a performance fix.
 - NrTemporal.hlsl now reuses neighborhood observations. Existing GPU tests
   prove equivalence on 41 synthetic frames, not natural-video quality.
 - Magpie at 3841698348bfb246623d4acf791984c8b68a577b uses NvVFX
-  VideoSuperRes with denoise quality 8..11 / 16..19. SDR uses D3D11/CUDA
+  VideoSuperRes. Official denoise quality is 8..11; 16..19 is high-bitrate
+  upscaling without artifact suppression, not denoise. SDR uses D3D11/CUDA
   interop followed by stream synchronization; HDR falls back to CPU U8 staging.
   These are not NGX VSR quality values and not a suitable direct HDR port.
 - Current XeSS timing/motion code previously matched released 1.4.3. The
