@@ -183,3 +183,38 @@ short/long burst boundaries independently; no extra queue or fixed wait.
 P2 DLSS long gaps and P3-P6 remain as listed in the execution plan; this work
 does not change or complete them. Independent denoising prerequisites remain
 unresolved. No software performance claim is extended to other GPUs.
+
+## Fence readiness attribution
+
+Read-only tracing now samples the audited scheduler fence on entry and at
+timestamp calculation, with the native lookup target. Only our synchronous
+index1 scheduler calls are sampled; pointers are thread-local and cleared
+on return. No resource lifetime, signal, wait or deadline is changed.
+UINT64_MAX completion is classified as device removal, not readiness.
+
+20s heavy source-timing-on run, fence-on/sr-nr-xess4: exit0, source52.25/s,
+process age P95 38.815ms. All351 retained first-index samples had a pending
+fence on entry and a completed fence at deadline calculation. None was
+already ready or still pending. Entry-to-deadline mean8.465ms/P95 14.300ms;
+subsequent deadline wait mean3.815ms. This proves a real pending dependency,
+NOT that all8.465ms is GPU execution, nor that hardware alone is responsible.
+Queue backlog and CPU wake time remain possible contributors. Do not delete
+the wait. Retained SDK-return max47.473ms includes36.954ms in native Present,
+so even the largest spike is not explained solely by this fence wait.
+
+Static follow-up: VideoPresenter passes the shared direct queue to XeSS;
+only DLSS has the separate presentation queue. Provider code at0x21F030
+signals the sampled fence via a queue at context+0x10. Attribution of that
+queue's identity and preceding submissions is the next bounded investigation;
+do not simply enable the DLSS queue path for XeSS without resource retirement
+and tagging contracts. No new optimization is accepted by this diagnostic.
+
+Build log: E:/项目/Veyra/logs/fg-stability-fence-trace-20260921.log, exit0.
+EXE SHA256:90b63920f3e30d06ac509779adba087baeb953e09267316f18e3444219825387.
+Tests use existing matrix and timeline analyzer commands, cases sr-nr-xess4,
+seconds20. Evidence under E:/项目/Veyra/tests/fg-stability-20260921/fence-on.
+Five analyzer tests pass, including pending/ready/device-removed attribution.
+deadline-hook-switch and fence-hook-switch both pass12 backend/multiplier
+transactions plus3 layout sizes, exit0. This is lifecycle evidence, not visual
+acceptance or physical multi-monitor testing. Default candidate remains off;
+full goal and P2-P6 remain unfinished.

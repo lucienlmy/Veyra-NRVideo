@@ -45,6 +45,8 @@ struct FrameTraceEvent {
     uint32_t providerCycle=0,preparationCycle=0;
     uint32_t providerCallerRva=0;
     int64_t providerScheduleBeginHost=0;
+    bool providerFenceSampled=false;
+    uint64_t providerFenceBefore=0,providerFenceAtDeadline=0,providerFenceTarget=0;
 };
 // Owned by the logger, independent of the deduplicated error history. No
 // allocation, formatting or disk I/O occurs when an event is recorded.

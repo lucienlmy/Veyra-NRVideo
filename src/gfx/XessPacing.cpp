@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <intrin.h>
 #include <mutex>
+#include <d3d12.h>
 
 namespace veyra::gfx {
 namespace {
@@ -23,6 +24,15 @@ using RingSnapshotFn = void* (*)(void*, void*);
 using TimestampFn = void* (*)(void*, int64_t*, void*, void*, uint32_t, uint32_t);
 // Same pinned provider locations documented by Magpie 3841698348bfb246.
 constexpr uint32_t timestampThunkRva=0x3430,timestampFnRva=0x224B30;
+
+// Read-only samples around our synchronous scheduler call. The provider owns
+// the fence for the entire call; never retain it across calls or rebuilds.
+struct FenceObservation {
+    void* ring=nullptr;
+    ID3D12Fence* fence=nullptr;
+    uint64_t before=0;
+};
+thread_local FenceObservation fenceObservation;
 
 struct OutputIntervals {
     // Quarter-millisecond bins, with a separate overflow bin at 250ms.
@@ -118,6 +128,13 @@ void* traceDeadline(void* ctx,int64_t* out,void* lookup,void* timing,uint32_t in
     diagnostics::FrameTraceEvent event;event.kind=diagnostics::TraceKind::ProviderDeadline;
     event.host100ns=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()/100;
     event.detail=index;event.count=count;
+    if(lookup&&fenceObservation.fence&&fenceObservation.ring==ctx&&index==1){
+        event.providerFenceSampled=true;
+        event.providerFenceBefore=fenceObservation.before;
+        event.providerFenceAtDeadline=fenceObservation.fence->GetCompletedValue();
+        // Scheduler lookup local+0x18 supplies the fence value at 0x21eeeb.
+        std::memcpy(&event.providerFenceTarget,static_cast<uint8_t*>(lookup)+0x18,sizeof(uint64_t));
+    }
     // Audited native scheduler uses QPC converted to nanoseconds, not host100ns.
     const auto frequency=s.frequency.QuadPart;
     if(out&&frequency>0){
@@ -181,9 +198,16 @@ void scheduleFrame(void* ctx, uint8_t* burst, uint64_t index) {
     const uint64_t count = *reinterpret_cast<uint64_t*>(burst + 8);
 
     LARGE_INTEGER before{}, after{};
+    if(s.traceEnabled&&gate&&index==1){
+        ID3D12Fence* fence=nullptr;
+        // Audited 0x21eecf reads this pointer before GetCompletedValue.
+        std::memcpy(&fence,static_cast<uint8_t*>(ctx)+0x328,sizeof(fence));
+        if(fence)fenceObservation={static_cast<uint8_t*>(ctx)+XessPacing::kRingOffset,fence,fence->GetCompletedValue()};
+    }
     QueryPerformanceCounter(&before);
     const bool ok = s.sched(ctx, burst, gate, timing, static_cast<uint32_t>(index));
     QueryPerformanceCounter(&after);
+    fenceObservation={};
 
     std::lock_guard statsLock(s.statsMutex);
     ++s.scheduled;

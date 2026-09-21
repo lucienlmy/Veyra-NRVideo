@@ -53,6 +53,12 @@ SAOG0721/Magpie commit `3841698348bfb246623d4acf791984c8b68a577b`,
 the native deadline without modifying it. The upstream deadline rewrite is
 not ported. The audited DLL remains unchanged on disk.
 
+Read-only fence attribution additionally checks the same pinned provider's
+scheduler at 0x21EE30: context+0x328 is the ID3D12Fence queried at 0x21EECF,
+and timestamp lookup+0x18 holds the target tested at 0x21EEEB. Veyra samples
+GetCompletedValue around its synchronous scheduler call only when tracing;
+no fence value, event, deadline or queue submission is modified.
+
 ### Magpie NR temporal residual route (2026-09-20)
 
 Veyra's optional `src/pipeline/NrTemporalPass.cpp` and

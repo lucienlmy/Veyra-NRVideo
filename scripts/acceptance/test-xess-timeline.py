@@ -29,6 +29,17 @@ def cycle(number, epoch, begin, instance=1, revision=1, app=True):
 
 
 class TimelineTests(unittest.TestCase):
+    def test_fence_readiness_and_device_removal(self):
+        for before, after, expected in [(9, 10, "pendingThenReady"), (10, 10, "readyAtEntry"),
+                                         (8, 9, "stillPending"), ((1 << 64) - 1, 10, "deviceRemoved")]:
+            text = cycle(1, 1, 0)
+            text += "event=ProviderOutput presentBeginHost=50000 presentEndHost=60000 providerScheduleBeginHost=30000\n"
+            text += (f"event=ProviderDeadline host=40000 detail=1 ms=0.9 providerFenceSampled=1 "
+                     f"providerFenceBefore={before} providerFenceAtDeadline={after} providerFenceTarget=10\n")
+            groups = timeline.analyze(Trace(text))["fenceEntryToDeadlineMs"]
+            self.assertEqual(groups[expected]["samples"], 1)
+            self.assertEqual(sum(group["samples"] for group in groups.values()), 1)
+
     def test_output_gap_components_and_legacy_unknown(self):
         text = cycle(1, 1, 0)
         text += "event=ProviderOutput presentBeginHost=9000 presentEndHost=10000 providerCallerRva=1 providerScheduleBeginHost=8000\n"

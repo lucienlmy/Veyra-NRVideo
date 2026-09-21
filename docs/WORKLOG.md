@@ -5823,3 +5823,20 @@ segment is pure GPU time or remove the safety wait. Source52.24/s repeats.
 Next action changes from speculative timestamp port to fence/producer timing
 attribution. No cadence fix accepted. Analyzer4 tests pass; diff check passes.
 No package/runtime change, push or publication; goal remains active.
+
+Fence attribution follow-up: verified clean branch at512de1c before edits.
+Existing pre-work checkpoint d2ae8ee remains intact. Added opt-in completed
+fence snapshots to FrameTrace/Log/XessPacing and analyzer classification;
+corrected XessPacing.h's unverified claim of correct provider spacing.
+Same build-isolated command, target veyra, log under E:/项目/Veyra/logs/
+fg-stability-fence-trace-20260921.log, exit0. Updated only isolated app staging.
+fg-utilization-matrix.py --cases sr-nr-xess4 --seconds20 with trace and source
+timing enabled, output tests/fg-stability-20260921/fence-on; exit0.
+analyze-xess-timeline.py produced adjacent xess-timeline.json:351/351 entry
+fences pending then complete at deadline; mean8.465ms before deadline,
+3.815ms after. Source52.25/s, ageP95 38.815ms. Not isolated GPU duration.
+Both deadline-hook-switch and fence-hook-switch ui-fg-backends.py runs pass
+12 transactions,3 layout sizes, exit0. TEMP/TMP set to existing task tmp.
+test-xess-timeline.py passes5 tests. No runtime mutation, package, push or
+publication. Full acceptance and P2-P6 remain outstanding; next inspect
+producer-queue dependency before changing scheduling.

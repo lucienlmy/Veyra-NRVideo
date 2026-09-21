@@ -27,6 +27,7 @@ def analyze(path):
                    for previous, current in zip(outputs, outputs[1:])]
     transitions = {}
     deadlines = [row for row in events if row["event"] == "ProviderDeadline"]
+    fence_groups = {name: [] for name in ("readyAtEntry", "pendingThenReady", "stillPending", "deviceRemoved")}
     first_schedule_parts = {name: [] for name in ("beforeDeadlineMs", "afterDeadlineMs", "deadlineLeadMs")}
     for output in outputs:
         begin = int(output.get("providerScheduleBeginHost", 0))
@@ -37,6 +38,13 @@ def analyze(path):
             first_schedule_parts["beforeDeadlineMs"].append((int(row["host"]) - begin) / 10000)
             first_schedule_parts["afterDeadlineMs"].append((end - int(row["host"])) / 10000)
             first_schedule_parts["deadlineLeadMs"].append(float(row["ms"]))
+            if int(row.get("providerFenceSampled", 0)):
+                before, after, target = (int(row[key]) for key in
+                                        ("providerFenceBefore", "providerFenceAtDeadline", "providerFenceTarget"))
+                category = ("deviceRemoved" if max(before, after) == (1 << 64) - 1 else
+                            "readyAtEntry" if before >= target else
+                            "pendingThenReady" if after >= target else "stillPending")
+                fence_groups[category].append((int(row["host"]) - begin) / 10000)
     for previous, current in zip(outputs, outputs[1:]):
         if not int(previous.get("providerCallerRva", 0)) or not int(current.get("providerCallerRva", 0)):
             continue
@@ -97,6 +105,7 @@ def analyze(path):
                 overwritten=int(header[3]) if header else None, cycles=len(rows), linkedCycles=len(linked),
                 sdkReturnIntervalMs=distribution(output_gaps),
                 firstScheduleParts={name: distribution(values) for name, values in first_schedule_parts.items()},
+                fenceEntryToDeadlineMs={name: distribution(values) for name, values in fence_groups.items()},
                 sdkCallerTransitions={key: {name: distribution(values) for name, values in group.items()}
                                       for key, group in transitions.items()},
                 sdkReturnGapsOver10ms=sum(gap>10 for gap in output_gaps),
