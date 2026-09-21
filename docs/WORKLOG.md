@@ -5936,3 +5936,12 @@ self-review clarified per-output versus group/scanout timing, applied frame-age
 non-regression to every load, added VRAM/slot reporting, and removed the inference
 that a failed overlap experiment alone proves an unavoidable hardware limit.
 No build or runtime test was needed for this documentation-only change.
+
+Follow-up audit against the historical experiment index found deliberate overlap in
+the proposed plan: CPU/presenter separation was an older candidate, XeSS source
+timing already has a partial candidate, and FG/Enhance overlap resembles the
+reverted NVOF/SR overlap. Added an explicit de-duplication section to the plan:
+these are not new fixes and cannot be reintroduced without a different dependency
+boundary and new evidence. The remaining new work is complete resource retirement
+(including guidance, descriptors, allocators, readback and backbuffer), XeSS
+post-Present provider retirement, and separate history/display state accounting.
