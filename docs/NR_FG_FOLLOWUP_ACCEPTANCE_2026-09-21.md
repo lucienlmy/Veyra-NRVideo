@@ -182,6 +182,34 @@ Final EXE SHA256:
 Optional PE stack inspection was not run because this build has no linker
 map. Hardware capture and physical display latency are not tested here.
 
+## Local package delivery
+
+Retained source checkpoint: `f029707`, tag
+`checkpoint/nr-fg-followup-verified-20260921`. Earlier `ab7979c` is preserved.
+Local package, not a GitHub release:
+`E:/项目/Veyra/test-packages/1.4.4beta-20260921-nr-followup/Veyra-1.4.4beta-win64-portable.zip`.
+Size: 472379957 bytes. SHA256:
+`A035A8C1956E1C539D39FEC917A273692A685B0A2184A026196700268B453ACB`.
+
+The publisher packaging audit accepts the pinned runtimes and licenses;
+no VFX runtime is added. The portable smoke suite passes all seven cases
+with isolated PATH and publisher manifests temporarily absent: empty,
+baseline, community NR/SR/FG, standard NR/SR/FG, Video SR/NR/FG,
+fresh effects-off defaults, and Ampere NR runtime evaluation. The last case
+is still on RTX 5070, not an RTX 30 hardware acceptance claim.
+Results: `E:/项目/Veyra/verify/1.4.4beta-20260921-nr-followup/result.json`.
+Actual packaged professional selectors also pass repeated backend/multiplier
+switching and resize: the same directory's `backends/result.json`.
+
+The ZIP was extracted and every manifest entry checked by size and SHA256.
+All 124 payload files match; no unlisted/config/log/media/VFX payload.
+The EXE and all 40 shaders match the build. Cleanup of the redundant extracted
+copy was rejected by automatic approval review ("blocked by policy", no
+specific reason supplied); the copy remains under the verification directory.
+Final ZIP, runnable staging and evidence remain.
+These checks accept packaging and tested lifecycle behavior, not the failed
+true-SR cadence, independent denoise or unmeasured XeSS image-quality cases.
+
 ## Evidence and commands
 
 - Source/build: `E:/项目/Veyra/worktrees/playback-nr-20260920` and

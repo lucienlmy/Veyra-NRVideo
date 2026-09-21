@@ -1,5 +1,11 @@
 # 当前项目状态 / Current Status
 
+2026-09-21 local test package delivered from source checkpoint `f029707`:
+`E:/项目/Veyra/test-packages/1.4.4beta-20260921-nr-followup/`.
+Seven portable smokes, packaged DLSS/XeSS switching and 124-file ZIP
+verification pass. This is partial capability acceptance; the true-SR
+high-multiplier cadence and independent denoise limitations below remain.
+
 2026-09-21 follow-up: retained temporal mask/time corrections and GPU
 neighborhood reuse; fixed repeated Present-deviation sampling and added
 separate entry/return diagnostics. NR temporal remains default-off.

@@ -1,5 +1,31 @@
 # Veyra 工作记录
 
+## 2026-09-21 NR/FG local package closure
+
+Source checkpoint f029707, tag checkpoint/nr-fg-followup-verified-20260921;
+ab7979c remains available. Built with scripts/build-isolated.ps1 and packaged
+with scripts/package-portable.ps1, version 1.4.4, label beta, explicit source,
+dependency, build and output directories. Package output:
+E:/项目/Veyra/test-packages/1.4.4beta-20260921-nr-followup/.
+ZIP: Veyra-1.4.4beta-win64-portable.zip, 472379957 bytes, SHA256
+A035A8C1956E1C539D39FEC917A273692A685B0A2184A026196700268B453ACB.
+
+scripts/acceptance/portable-smoke.ps1 passes 7/7 with the derived1080 video;
+scripts/acceptance/ui-fg-backends.py --portable passes using the package EXE.
+Evidence: E:/项目/Veyra/verify/1.4.4beta-20260921-nr-followup/{result.json,backends/result.json}.
+Expand-Archive plus manifest size/SHA256 checks verified all 124 files;
+EXE and 40 shaders match build, forbidden/unlisted file scan passes.
+Automatic approval review rejected deletion of the redundant extracted
+verification directory ("blocked by policy", no specific reason supplied).
+It remains alongside the ZIP, runnable package and evidence. No runtime/config
+changes after packaging.
+
+Bounded investigation ends with partial capability acceptance, not all issues
+fixed. True-SR DLSS 4X/6X cadence and XeSS temporal-on slowdown still fail;
+VFX effect creation fails before inference; generated-frame jelly comparison
+is unverified. No further speculative changes, main merge, push or shutdown.
+Full findings and commands: docs/NR_FG_FOLLOWUP_ACCEPTANCE_2026-09-21.md.
+
 ## 2026-09-21 NR/FG bounded repair and acceptance
 
 Continued from plan checkpoint 09b4ad7, preserving accepted ab7979c.
