@@ -162,7 +162,7 @@ case WM_COMMAND:
         const bool audioIndexValid=SendDlgItemMessageW(h,3,CB_GETCURSEL,0,0)!=CB_ERR&&(audio<0||size_t(audio)<audioDevices.size());
         if(!busy&&device==queriedDevice&&format>=0&&size_t(format)<formats.size()&&device>=0&&size_t(device)<videoDevices.size()&&audioIndexValid){
             const auto* audioDevice=audio>=0?&audioDevices[size_t(audio)]:nullptr;
-            const auto path=source::CaptureCardSource::makeCapturePath(unsigned(device),videoDevices[size_t(device)],formats[size_t(format)].index,audio,audioDevice,selectedColor(h),requestedFps);
+            const auto path=source::CaptureCardSource::makeCapturePath(unsigned(device),videoDevices[size_t(device)],formats[size_t(format)].index,audio,audioDevice,selectedColor(h),requestedFps,formats[size_t(format)].key);
             if(!path.empty()){
                 auto colors=remembered.deviceColors;colors[videoDevices[size_t(device)].path]=selectedColor(h);
                 remembered={videoDevices[size_t(device)].path,formats[size_t(format)].key,audioDevice?audioDevice->path:L"",audioDevice?(audioDevice->wasapi?source::kCaptureAudioWasapi:0):audio,selectedColor(h),remembered.formatHintDismissed,requestedFps,std::move(colors)};
