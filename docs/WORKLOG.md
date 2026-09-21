@@ -6010,3 +6010,61 @@ reported zero FG candidates on the available local media/runtime, so an attempte
 assertion that an admission skip must be nonzero was removed as an invalid
 environment-dependent test requirement. This does not count as FG runtime
 acceptance; it only verifies the cleanup build and the normal replay path.
+
+## 2026-09-21 RTX5090 P010 capture feedback: accepted CPU upload improvement
+
+Checkpoint `3953bff`; isolated branch `codex/5090-capture-fg-20260921` in
+`E:/项目/Veyra/worktrees/playback-nr-20260920`. Supplied log analysis and complete
+results: `docs/RTX5090_CAPTURE_FG_REPAIR_2026-09-21.md`. The log loses throughput
+after native4K quality-flow selection; 999/1000 FG admissions were accepted,
+so the evidence does not support blaming mass admission rejection here.
+
+Removed redundant same-format CPU P010/P016 staging in EnhanceGraph. Matching
+NV12/P010/P016 now upload exact rows once; luma analysis uses CPU source data.
+Added CpuYuvUploadTests/CMake target and optional runtime path argument to the
+existing FgPresentationTests, avoiding runtime artifacts in the source tree.
+
+Build command (targets built across two invocations):
+
+```powershell
+./scripts/build-isolated.ps1 -Root 'E:/项目/Veyra/worktrees/playback-nr-20260920' -BuildDirectory 'E:/项目/Veyra/build/1.4.4-xess-current-20260921-r1' -DependencyCache 'E:/项目/Veyra/build/1.4.4-xess-current-20260921-r1/CMakeCache.txt' -TempDirectory 'E:/项目/Veyra/tmp/5090-capture-fg-20260921' -Targets @('veyra','veyra_cpu_yuv_upload_tests','veyra_hdr_color_tests','veyra_fg_sustained_tests','veyra_live_presentation_tests','veyra_fg_presentation_tests')
+```
+
+Build succeeded with existing dependency/FFmpeg warnings. Runtime test processes
+use the same task TEMP/TMP and the patched FFmpeg bin on PATH. After the user
+closed their app, ran the saved baseline and current CPU upload executable twice
+each, no arguments; all exit 0. P010 median 2.39/2.44 -> 0.98/0.93 ms; 18 GPU
+pixel hashes match exactly each round. NV12 unchanged. These are isolated CPU
+upload measurements, not capture/FG or screen-latency measurements. The earlier
+concurrent baseline is excluded. `veyra_hdr_color_tests.exe` without arguments
+passed; it does not test actual HDR model execution.
+
+```powershell
+python scripts/acceptance/fg-utilization-matrix.py --exe 'E:/项目/Veyra/tests/5090-capture-fg-20260921/app/veyra.exe' --native 'E:/项目/Likely7 个人账号/Deepseek Grok/p001.mp4' --derived 'E:/项目/Veyra/tests/nr-fg-followup-20260921/p001-derived1080.mp4' --output 'E:/项目/Veyra/tests/5090-capture-fg-20260921/sustained' --temp 'E:/项目/Veyra/tmp/5090-capture-fg-20260921' --cases native-nr-dlss2 native-nr-dlss6 native-nr-xess4 --seconds 60
+```
+
+All three runs exit 0. Original4K file input, realtime1080 NR, balanced flow;
+hardware import bypasses the changed CPU upload. DLSS2 tail120 FPS; DLSS6
+tail298 FPS but P99 16.8ms and incomplete360 target; XeSS4 real input60 and SDK
+4-output groups, not a measured uniform240 scanout. Another matrix command with
+`--output .../nr-only --cases native-nr-dlss1 --seconds 35` passed. Two FG runs
+showed ~31ms wall-time stalls in NR Evaluate at frame605; NR-only did not exceed
+the30ms logging threshold. No proven periodic timer or root cause, no speculative
+NR/runtime mutation. Missing exploratory src/player, src/render, src/app and
+runtime_local/nvidia paths were corrected by inspecting the actual tree/runtime;
+these failed read-only queries did not change files.
+
+```powershell
+& 'E:/项目/Veyra/build/1.4.4-xess-current-20260921-r1/veyra_fg_presentation_tests.exe' 'E:/项目/Veyra/tests/5090-capture-fg-20260921/presentation' 'E:/项目/Veyra/tests/5090-capture-fg-20260921/app/runtime/experimental'
+```
+
+Exit0; DLSS4/6/4 generated114/190/114, checked pixel error0, D3D12 errors0;
+includes resize, reset and producer/consumer retirement checks. Not an HDR
+under-target flicker reproduction. Other built test binaries were not separately
+executed and are not counted as passed tests.
+
+Artifacts remain under `E:/项目/Veyra/tests/5090-capture-fg-20260921/` and
+`E:/项目/Veyra/tmp/5090-capture-fg-20260921/`; existing isolated build reused.
+Retained baseline executable/logs and one runnable fixed staging app; no ZIP,
+portable duplication, runtime mutation, proprietary Git files, merge, push or
+release. 5090 live acceptance, 15-second hitch and user flicker remain unresolved.

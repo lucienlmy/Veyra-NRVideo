@@ -1486,24 +1486,44 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
         stager_.stageSrv(nv12Texture, &chromaSrv, yuvPass_.heap.Get(), 4 + parity * 2);
         tracker_.transition(list, nv12Texture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     } else {
+        const auto uploadFormat=desc_.captureBitDepth==16?AV_PIX_FMT_P016:desc_.wideYuvInput()?AV_PIX_FMT_P010:AV_PIX_FMT_NV12;
+        const bool sameLayout=frame->format==uploadFormat;
+        const unsigned sampleBytes=desc_.wideYuvInput()?2u:1u;
+        const bool directUpload=sameLayout||(!desc_.wideYuvInput()&&(frame->format==AV_PIX_FMT_YUV420P||frame->format==AV_PIX_FMT_YUVJ420P));
+        uint8_t* planes[4] = { directUpload?mappedLuma_[parity]:nv12Buf_.data(), directUpload?mappedChroma_[parity]:nv12Buf_.data() + lumaSize_ };
+        const int strides[4] = { static_cast<int>(lumaPitch_), static_cast<int>(chromaPitch_) };
+        if(sameLayout){
+            // Native semiplanar capture already matches the upload textures.
+            // Copy rows once, preserving every code value and signed stride.
+            const size_t rowBytes[2]={size_t(srcW_)*sampleBytes,size_t((srcW_+1)/2)*2*sampleBytes};
+            const unsigned rows[2]={srcH_,(srcH_+1)/2};
+            for(unsigned plane=0;plane<2;++plane){
+                const auto pitch=int64_t(frame->linesize[plane]);
+                if(!frame->data[plane]||uint64_t(pitch<0?-pitch:pitch)<rowBytes[plane]){
+                    veyra::log::error("color","Invalid native YUV plane or row stride");return false;
+                }
+            }
+            for(unsigned plane=0;plane<2;++plane)for(unsigned y=0;y<rows[plane];++y)
+                std::memcpy(planes[plane]+size_t(y)*strides[plane],frame->data[plane]+ptrdiff_t(y)*frame->linesize[plane],rowBytes[plane]);
+        }else{
         nv12Ctx_ = sws_getCachedContext(nv12Ctx_, frame->width, frame->height,
             static_cast<AVPixelFormat>(frame->format),
-            frame->width, frame->height, desc_.captureBitDepth==16?AV_PIX_FMT_P016:desc_.wideYuvInput()?AV_PIX_FMT_P010:AV_PIX_FMT_NV12, SWS_POINT,
+            frame->width, frame->height, uploadFormat, SWS_POINT,
             nullptr, nullptr, nullptr);
         if (nv12Ctx_ == nullptr) { veyra::log::error("graph", "sws"); return false; }
         const int colorSpace=resolved.matrix==YuvMatrix::BT2020NCL?SWS_CS_BT2020:resolved.matrix==YuvMatrix::BT601?SWS_CS_ITU601:SWS_CS_ITU709;
         const int* coefficients=sws_getCoefficients(colorSpace);
         const int full=resolved.range==ColorRange::Full?1:0;
         if(sws_setColorspaceDetails(nv12Ctx_,coefficients,full,coefficients,full,0,1<<16,1<<16)<0)return false;
-        // Planar 8-bit YUV already exposes CPU luma for cadence analysis.
-        // Convert directly into the fenced upload slot instead of writing and
-        // copying another full NV12 frame. Never sample write-combined memory.
-        const bool directUpload=!desc_.wideYuvInput()&&(frame->format==AV_PIX_FMT_YUV420P||frame->format==AV_PIX_FMT_YUVJ420P||frame->format==AV_PIX_FMT_NV12);
-        uint8_t* planes[4] = { directUpload?mappedLuma_[parity]:nv12Buf_.data(), directUpload?mappedChroma_[parity]:nv12Buf_.data() + lumaSize_ };
-        const int strides[4] = { static_cast<int>(lumaPitch_), static_cast<int>(chromaPitch_) };
         if(sws_scale(nv12Ctx_, frame->data, frame->linesize, 0, frame->height, planes, strides)!=frame->height){veyra::log::error("color","Software plane conversion failed");return false;}
+        }
+        // Analyze CPU luma, never write-combined upload memory. The high byte
+        // of P010/P016 retains the existing 8-bit scene/cadence proxy exactly.
+        const auto* sampleLuma=directUpload?frame->data[0]:planes[0];
+        const auto samplePitch=directUpload?ptrdiff_t(frame->linesize[0]):ptrdiff_t(lumaPitch_);
         std::vector<uint8_t> sample;sample.reserve(64*36);
-        for(unsigned y=0;y<36;++y)for(unsigned x=0;x<64;++x){const uint8_t v=directUpload?frame->data[0][ptrdiff_t(y*srcH_/36)*frame->linesize[0]+x*srcW_/64]:planes[0][size_t(y*srcH_/36)*lumaPitch_+(x*srcW_/64)*(desc_.wideYuvInput()?2:1)+(desc_.wideYuvInput()?1:0)];sample.push_back(v);}
+        for(unsigned y=0;y<36;++y)for(unsigned x=0;x<64;++x)
+            sample.push_back(sampleLuma[ptrdiff_t(y*srcH_/36)*samplePitch+(x*srcW_/64)*sampleBytes+(sampleBytes-1)]);
         analyzeLuma(std::move(sample));
         if(!directUpload){for (uint32_t y = 0; y < srcH_; ++y)
             std::memcpy(mappedLuma_[parity] + y * lumaPitch_, planes[0] + y * lumaPitch_, srcW_*(desc_.wideYuvInput()?2:1));

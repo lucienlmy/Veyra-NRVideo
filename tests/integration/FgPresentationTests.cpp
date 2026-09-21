@@ -13,7 +13,8 @@ extern "C" {
 
 int wmain(int argc,wchar_t** argv){
     using namespace veyra;
-    if(argc!=2||FAILED(CoInitializeEx(nullptr,COINIT_MULTITHREADED)))return 2;
+    if((argc!=2&&argc!=3)||FAILED(CoInitializeEx(nullptr,COINIT_MULTITHREADED)))return 2;
+    const auto runtimePath=argc==3?std::filesystem::absolute(argv[2]):std::filesystem::path(VEYRA_PROJECT_ROOT)/"runtime_local/nvidia";
     std::filesystem::create_directories(argv[1]);
     HWND window=CreateWindowExW(0,L"STATIC",L"FG presentation regression",WS_POPUP,0,0,640,360,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
     gfx::D3D12DeviceContext ctx;gfx::CommandSlotRing ring;Status status=Status::Ok;
@@ -31,7 +32,7 @@ int wmain(int argc,wchar_t** argv){
         ++cycle;
         pipeline::EnhanceGraphDesc desc;desc.sourceWidth=desc.workWidth=640;desc.sourceHeight=desc.workHeight=360;
         desc.enableNr=desc.enableSr=false;desc.enableFg=desc.rgbInput=true;desc.fgMultiplier=multiplier;
-        desc.runtimeAbsPath=(std::filesystem::path(VEYRA_PROJECT_ROOT)/"runtime_local/nvidia").wstring();
+        desc.runtimeAbsPath=runtimePath.wstring();
         ok=graph.initialize(desc)&&presenter.open(ctx,window,graph)&&graph.createViews();
         if(ok&&cycle==1){
             // A producer allocator stall must not be reported as private
