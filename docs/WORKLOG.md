@@ -5890,3 +5890,10 @@ Both deadline-hook-switch and fence-hook-switch ui-fg-backends.py runs pass
 test-xess-timeline.py passes5 tests. No runtime mutation, package, push or
 publication. Full acceptance and P2-P6 remain outstanding; next inspect
 producer-queue dependency before changing scheduling.
+2026-09-21 Magpie/Veyra follow-up: continued read-only source audit after syncing
+SAOG0721/Magpie experimental at 3841698. Confirmed Veyra LiveGpuScheduler executes
+present callbacks on the graph owner thread; XeSS provider waits therefore block
+the same CPU submission path. Confirmed Veyra's presentationSubmitted fence is
+before sink Present and cannot be treated as provider-consumed retirement. No code
+or runtime changed, no new performance test run. Added the resource ownership and
+bounded producer/presenter admission criteria to MAGPIE_SCHEDULING_SOURCE_AUDIT.

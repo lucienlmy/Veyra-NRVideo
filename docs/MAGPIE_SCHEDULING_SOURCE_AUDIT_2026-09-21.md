@@ -67,3 +67,41 @@ Veyra 当前候选仅传真实源间隔，默认关闭；时间戳 hook 是只�
 
 重试前查 [实验索引](FG_EXPERIMENT_INDEX_2026-09-21.md)。本轮无代码移植，故不新增
 第三方衍生源码；将来移植须记录此固定提交、GPLv3、具体文件和改动至 THIRD_PARTY_NOTICES。
+
+## 继续复核：CPU 阻塞与资源归还合同
+
+2026-09-21 继续只读核对当前 Veyra，未运行新性能测试，未改变产品行为。
+
+- `include/veyra/engine/LiveGpuScheduler.h` 的任务直接在 graph owner 线程执行。
+  `EngineController.cpp:1275,1349` 的任务回调直接调用 presenter；Future deadline
+  可以返回 Pending，但进入 provider Present 后的阻塞不会让出此工作线程。
+  因此 XeSS 的 SDK 等待会阻止同一线程提交下一帧增强。这是源码事实，尚不是
+  已证明可消除的 GPU 空闲：已有 GPU 命令可能仍在执行。
+- `VideoPresenter.cpp:28` 仅为 DLSS 创建独立呈现队列。独立 GPU queue 不等于
+  独立 CPU 提交线程；不能把 Veyra 已有的队列重复包装成 Magpie 式双线程优化。
+- `VideoPresenter.cpp` 在 `ring.submitAndSignal` 后登记
+  `graph.presentationSubmitted`，随后才调用 `sink_.present`。这枚 fence 覆盖
+  应用 blit，不覆盖之后 XeSS 在 Present 中追加的命令。当前 XeSS 未走该独立
+  队列分支，同线程提交和同 GPU 队列排序是现有保护的一部分；未发现据此即可
+  判定当前存在提前复用的证据。
+- `XessPresenter.cpp:262` 使用 UNTIL_NEXT_PRESENT 输入有效期。
+  Magpie `XeSSFGPresenter.cpp:1043` 在 Present 返回后 Signal，再让 D3D11
+  等待这个值。若移植此架构，须查清所用 SDK 对输入消费/内部队列交接的合同，
+  不能把前置 blit fence 当 provider 退休 fence，也不能只凭 CPU 返回判断 GPU 完成。
+- `EnhanceGraph.h:186` 同时检查输出 lease 和 consumer fence；
+  `EnhanceGraph.cpp:1330` 在复用前安排 GPU Wait。但深度、映射运动纹理、
+  presenter 的 backbuffer、描述符和 XeLL cycle 也要有明确归属，单独保护彩色
+  输出不足以允许两个 CPU 线程并发访问现有对象。
+
+### 下一候选的准入条件
+
+仅在时间线显示 Present 阻塞期间存在可提前提交的独立工作时，考虑有界的
+producer/presenter 交接；不加深队列、不改变倍率、不增加固定等待。
+先建立不可变帧描述与完整输入资源租约，指定 producer-ready 和 provider-consumed
+两端 fence，串行化 Tag/Present/XeLL，定义 seek/resize/退出取消与退休顺序。
+记录当前排队深度下可重叠的实际工作，再做一个有界对照；若 GPU 已持续占满关键
+执行资源，则拆线程可能只有风险，没有吞吐收益。
+
+另一路是 Magpie 的 XeSS 时间戳策略，但必须先分离资源等待与期限等待。不能靠
+压短期限把五张图挤在一起、提高 FPS 数字来冒充流畅改善。DLSS 不采用这条 XeSS
+补丁；其预算拒绝/历史预热仍按 P2 单独归因。
