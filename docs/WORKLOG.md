@@ -1,5 +1,14 @@
 # Veyra 工作记录
 
+## 2026-09-21 用户要求复核失败实验清理与防重复记录
+
+核对 git status、源码实验入口与既有实验文档；工作区初始干净。
+新增 FG_EXPERIMENT_INDEX_2026-09-21.md 并从 CURRENT_STATUS 链接。
+确认六项已撤回入口不在 src/include/tests；如实列出仍默认关闭的
+光流/SR重叠实验和XeSS真实源时间提示候选，不能宣称实验代码全部清除。
+补充重试必须具备新证据、实质实现差异和验收门槛的要求。
+仅文档修改，git diff --check；未运行新性能测试、未构建或发布。
+
 ## 2026-09-21 XeSS one-pending experiment rejected; DLSS evidence review
 
 Continued from a0e39ea on codex/fg-stability-20260921, pre-work checkpoint
