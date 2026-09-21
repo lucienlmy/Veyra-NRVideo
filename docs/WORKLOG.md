@@ -1,5 +1,18 @@
 # Veyra 工作记录
 
+## 2026-09-21 Magpie upstream refresh and source audit
+
+User requested upstream source inspection. Existing clean clone at
+E:/项目/Veyra/downloads/magpie-six-issue-audit-20260920 refreshed with
+git fetch origin --prune; git ls-remote --symref origin HEAD confirms
+experimental HEAD3841698348bfb246623d4acf791984c8b68a577b unchanged.
+Read Renderer, DLSSFrameGenerator, XeSSFGPresenter, XeSSFGTiming,
+XeSSFGPacing and FramePresentationTiming. Recorded exact source references,
+queue/CPU waits, DLSS4X clamp, pacing timestamp rewrite and transfer risks
+in MAGPIE_SCHEDULING_SOURCE_AUDIT_2026-09-21.md, linked CURRENT_STATUS.
+No runtime download, product edit, benchmark, build, package or publication.
+Documentation diff checked; source inspection does not prove visual stability.
+
 ## 2026-09-21 用户要求复核失败实验清理与防重复记录
 
 核对 git status、源码实验入口与既有实验文档；工作区初始干净。
