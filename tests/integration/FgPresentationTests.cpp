@@ -96,6 +96,36 @@ int wmain(int argc,wchar_t** argv){
             }
         }
         ok=ok&&generated==38*(multiplier-1);
+        unsigned pendingOriginals=0;
+        for(unsigned i=40;ok&&i<56;++i){
+            // Expired/suppressed generated frames can be bypassed before their
+            // fences complete. The original must still wait for ALL FG reads
+            // on the producer queue before its presentation transition.
+            for(unsigned y=0;y<360;++y)for(unsigned x=0;x<640;++x){
+                auto* p=frame->data[0]+size_t(y)*frame->linesize[0]+x*4;
+                p[0]=uint8_t(24+i*3);p[1]=uint8_t(32+x/4);p[2]=uint8_t(48+y/3);p[3]=255;
+            }
+            pipeline::EnhanceGraph::FrameOutputs out;
+            ok=graph.process(frame,i*20.0,i==48,out,i+1);
+            if(!ok)break;
+            const auto& original=out.batch.frames[out.batch.count-1];
+            if(!out.gpuComplete())++pendingOriginals;
+            ok=original.kind==pipeline::FrameKind::Real&&
+                presenter.present(ctx,ring,graph,original.lease->slot,false,false,0,false,.5f,original.identity);
+            sink::RgbaImage shown,expected;
+            ok=ok&&presenter.readPresentedFrameForTest(ctx,ring,shown)&&
+                sink::readRgba8(ctx,ring,original.lease->texture.Get(),expected);
+            ok=ok&&shown.width==expected.width&&shown.height==expected.height&&shown.pixels.size()==expected.pixels.size();
+            if(ok){
+                for(size_t p=0;p<shown.pixels.size();++p)if(p%4!=3)
+                    maxError=std::max(maxError,std::abs(int(shown.pixels[p])-int(expected.pixels[p])));
+                ok=maxError<=2;
+            }
+            ok=ok&&graph.resolveGeneration(out);
+        }
+        ok=ok&&pendingOriginals>0;
+        std::cout<<"EARLY_ORIGINAL multiplier="<<multiplier<<" pending="<<pendingOriginals
+                 <<" maxPixelError="<<maxError<<" pass="<<ok<<std::endl;
         // Also exercise producer teardown first: it must cover consumer GPU reads.
         graph.shutdown();presenter.close();
         std::cout<<"PRESENTATION multiplier="<<multiplier<<" generated="<<generated<<" maxPixelError="<<maxError<<" pass="<<ok<<std::endl;

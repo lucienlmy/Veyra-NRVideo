@@ -1,5 +1,75 @@
 # Veyra 工作记录
 
+## 2026-09-22 补全全软件问题台账，历史 DLSS/XeSS 单列
+
+用户指出上一份报告遗漏展开历史 XeSS 和 DLSS 6X。新增
+`docs/WHOLE_PRODUCT_ISSUE_LEDGER_2026-09-22.md`，更新 CURRENT_STATUS 和全链路方案入口。
+明确 D1–D3、X1–X4 与跨后端闪烁同为优先任务；采集 A–E 的排列不再造成
+“先做完采集才看历史补帧”的误读。补充源/增强/音频/显示/UI/字幕/导出/打包覆盖表，
+区分实际未解决问题、确定性缺口、待验收候选、已修事项和用户暂缓项。
+
+复核 1.4.3 同条件版本对照、FG_STABILITY_PROGRESS、NR_FG_FOLLOWUP、
+CAPTURE_UI_SYNC、CORRECTIVE_AUDIT、POST_1_4_3_REPAIR_LEDGER、SEVEN_AUDIT、
+FG_BACKEND_SWITCH、NR_QUALITY、SCHEDULING_CHAIN 与 1.4.3 Release 记录；
+源码复核 VideoPresenter 的身份/候选/VSync/cap/Reflex 分支、压缩采集位深转换、
+EnhanceGraph 的 HDR 支持边界。一次 rg 写错 XeFgPacing.cpp 路径报错，
+随后 rg --files 确认实际文件为 XessPacing.cpp；不把失败搜索当缺失实现。
+
+关键历史结论：原生 NR+DLSS6 同条件全段 272.03/268.23 提交每秒，
+P99 16.934/16.899ms；不能与另一测试后段 298 相减推导性能倒退。
+真超分+NR+XeSS4 源 58.51→39.84/s，旧版频繁停止生成，不可恢复旧门当修复。
+2X/5090 与高倍率的拒绝比例不同，不能统一归因 admission。
+源时间候选继续默认关闭；失败方向继续排除，不新造重复实验。
+
+本次仅文档补全，无产品修改、运行测试、构建、打包或 Git 提交；保留既有七个
+未提交代码/测试文件。`git diff --check` 退出 0（仅已有换行转换提示），新台账、
+全链路方案和 CURRENT_STATUS 的 Markdown 文件链接目标存在；七个代码/测试文件
+SHA-256 与本次文档编辑前一致。复查修正了台账中的 FSR 同步行号。
+这些仅为文档和修改范围检查，不冒充整机或画质验收。
+
+## 2026-09-22 全链路卡顿/闪烁/采集清晰度复核，方案交付
+
+最新用户要求先核对全链路及失败历史、写方案，不继续产品修改或性能实验。
+工作区 `E:/项目/Veyra/worktrees/playback-nr-20260920`，分支
+`codex/5090-capture-fg-20260921`，HEAD `edfd886`。新增
+`docs/FULL_CHAIN_REGRESSION_REPAIR_PLAN_2026-09-22.md`，更新 CURRENT_STATUS
+及两份旧方案入口，去掉当前入口仍建议默认尝试关键路径重叠的过时措辞。
+
+读取用户桌面的“那天就是用着4k跑着的感觉挺清晰的，但突然屏幕卡住了，然后我重启了下软件，再打开发现画面就很糊了.log”：
+8 次图初始化全部关闭 SR/NR/FG/NVOF；4K30 P010 源 311/330 的回调到达间隔
+1184.06/1314.98ms，PTS 同时跳变。不能用补帧预算解释该阶段；也不能仅凭
+回调断档认定硬件坏了。后续模式变化有选择器操作，没有日志证据证明静默降分辨率。
+关闭与再打开之间的长空白未标成死锁；提供的文件没有对应终止崩溃栈。
+
+源码复核补充：UI formatKey 恢复已存在，但采集 URI/最近打开仍保存数字格式索引，
+初次重新 GetStreamCaps 与选择时格式身份没有完整对照，重连未核对默认 FPS。
+回调持源锁时可写警告，统一 logger 仍在锁内同步写/flush；是可能阻塞边界，
+不是已测根因。采集色度最近邻和显示双线性与高质量 remote 采样路径有差异，
+不能直接称为突然变糊根因。XeSS 已做源身份/reset 检查、原生 sink 已检查动态
+媒体类型，因此不把这些已有实现重新写成缺失功能。
+
+核对 FG_EXPERIMENT_INDEX、FG_NON_NR_EXPERIMENTS、FG_RUNTIME_REPAIR_PLAN、
+FG_PIPELINE_REASSESSMENT、POST_1_4_3_REPAIR_LEDGER、DLSS_RECOVERY、
+RTX5090_CAPTURE_FG_REPAIR、SEVEN_AUDIT_REPAIR 等证据；失败方向仅保留排除清单。
+两后端从 2X 验到各自最高倍率；采集输入、历史恢复、画面内容、呈现、HDR及清晰度
+分开定因，不使用固定 15 秒假设，不新增等待或默认降档。
+
+本轮前的未提交工作保持：CMakeLists、PresentSink.h/.cpp、EngineController.cpp、
+FgPresentationTests.cpp，以及新增 HdrDisplayState.h/HdrDisplayStateTests.cpp。
+早原帧 SDR 资源回归已在前一阶段运行（DLSS 4/6/4，另加 48 原帧，像素/D3D12 错误 0），
+不等于 HDR 欠速闪烁验收。HDR 查询失败三态候选仅构建成功，尚未运行测试或打包。
+前阶段构建先因测试目标缺 /utf-8 失败，补编译选项后成功，日志：
+`E:/项目/Veyra/tests/fg-regression-20260921/build-hdr-query.log` 与 `build-hdr-query-r2.log`。
+旧 v1.4.0 对照构建仍失败于资源编译 Unicode 路径（此前还补过 NVENC include），
+`E:/项目/Veyra/tests/fg-regression-20260921/build-v140.log`；没有可运行旧版性能对照。
+
+本轮命令为 git status/log/diff、rg、Get-Content、Get-FileHash 等只读复核；
+apply_patch 仅改文档。一次组合补丁因旧方案标题上下文不匹配未应用，读取实际标题后重试。
+无新构建、GPU 运行、包、运行时修改、Git 提交、合并、push 或 Release；
+未新增产物目录。最终 `git diff --check` 通过；新方案/当前状态/两份旧方案的
+Markdown 文件链接目标全部存在；原有七个产品/测试文件 SHA-256 与本阶段编辑前
+一致。这些是文档和修改范围检查，不是运行验收。
+
 ## 2026-09-21 生成 1.4.4 XeSS A/B 测试包
 
 按用户要求生成两个可并行对比的 1.4.4 便携包。A 使用当前工作区

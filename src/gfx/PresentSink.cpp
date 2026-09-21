@@ -21,14 +21,38 @@ const wchar_t* kWindowClassName = L"VeyraPresentSink";
 } // namespace
 
 bool PresentSink::hdrDisplayActive(HWND window){
+    return queryHdrDisplayActive(window).value_or(false);
+}
+
+std::optional<bool> PresentSink::queryHdrDisplayActive(HWND window){
     const auto monitor=MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST);
-    ComPtr<IDXGIFactory1> factory;if(FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))return false;
-    for(UINT a=0;;++a){ComPtr<IDXGIAdapter1> adapter;if(factory->EnumAdapters1(a,&adapter)==DXGI_ERROR_NOT_FOUND)break;if(!adapter)break;
-        for(UINT i=0;;++i){ComPtr<IDXGIOutput> output;if(adapter->EnumOutputs(i,&output)==DXGI_ERROR_NOT_FOUND)break;if(!output)break;
-            ComPtr<IDXGIOutput6> advanced;if(FAILED(output.As(&advanced)))continue;DXGI_OUTPUT_DESC1 desc{};
-            if(SUCCEEDED(advanced->GetDesc1(&desc))&&desc.Monitor==monitor)return desc.ColorSpace==DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+    if(!monitor)return std::nullopt;
+    ComPtr<IDXGIFactory1> factory;
+    auto hr=CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+    if(FAILED(hr)){log::warn("display-color",std::format("CreateDXGIFactory1 query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+    for(UINT a=0;;++a){
+        ComPtr<IDXGIAdapter1> adapter;hr=factory->EnumAdapters1(a,&adapter);
+        if(hr==DXGI_ERROR_NOT_FOUND)break;
+        if(FAILED(hr)){log::warn("display-color",std::format("EnumAdapters1 query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+        for(UINT i=0;;++i){
+            ComPtr<IDXGIOutput> output;hr=adapter->EnumOutputs(i,&output);
+            if(hr==DXGI_ERROR_NOT_FOUND)break;
+            if(FAILED(hr)){log::warn("display-color",std::format("EnumOutputs query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+            DXGI_OUTPUT_DESC basic{};hr=output->GetDesc(&basic);
+            if(FAILED(hr)){log::warn("display-color",std::format("GetDesc query failed hr=0x{:X}",unsigned(hr)));continue;}
+            if(basic.Monitor!=monitor)continue;
+            ComPtr<IDXGIOutput6> advanced;hr=output.As(&advanced);
+            // An older output interface cannot expose HDR. Other failures
+            // leave the previously established output contract untouched.
+            if(hr==E_NOINTERFACE)return false;
+            if(FAILED(hr)){log::warn("display-color",std::format("IDXGIOutput6 query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+            DXGI_OUTPUT_DESC1 desc{};hr=advanced->GetDesc1(&desc);
+            if(FAILED(hr)){log::warn("display-color",std::format("GetDesc1 query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+            if(desc.Monitor!=monitor)return std::nullopt;
+            return desc.ColorSpace==DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
         }
-    }return false;
+    }
+    return std::nullopt;
 }
 
 double PresentSink::displayRefreshFps(HWND window){

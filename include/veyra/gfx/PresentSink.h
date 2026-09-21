@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <string>
+#include <optional>
 
 #include "veyra/Result.h"
 #include "veyra/gfx/XessPresenter.h"
@@ -26,6 +27,7 @@ using ComPtr = Microsoft::WRL::ComPtr<T>;
 class PresentSink {
 public:
     static bool hdrDisplayActive(HWND);
+    static std::optional<bool> queryHdrDisplayActive(HWND);
     static double displayRefreshFps(HWND);
     PresentSink() = default;
     ~PresentSink();

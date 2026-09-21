@@ -1,5 +1,9 @@
 # Frame-generation pipeline reassessment
 
+> Superseded execution order: [full-chain review, 2026-09-22](FULL_CHAIN_REGRESSION_REPAIR_PLAN_2026-09-22.md).
+> This document preserves historical evidence. Its overlap/owner-splitting suggestions
+> are not current work items; rejected experiments must not be repeated as new fixes.
+
 ## Scope
 
 User cancelled further Magpie binary benchmarking and requested architectural
