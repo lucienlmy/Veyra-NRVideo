@@ -16,7 +16,7 @@ class VideoPresenter {
 public:
     ~VideoPresenter(){close();}
     bool open(gfx::D3D12DeviceContext&, HWND, pipeline::EnhanceGraph&, bool captureCompatible=false);
-    bool present(gfx::D3D12DeviceContext&,gfx::CommandSlotRing&,pipeline::EnhanceGraph&,unsigned slot,bool generated,bool referencesValid=true,int comparison=0,bool baseReference=false,float split=.5f,pipeline::FrameIdentity identity={},PreviewView view={});
+    bool present(gfx::D3D12DeviceContext&,gfx::CommandSlotRing&,pipeline::EnhanceGraph&,unsigned slot,bool generated,bool referencesValid=true,int comparison=0,bool baseReference=false,float split=.5f,pipeline::FrameIdentity identity={},PreviewView view={},int64_t sourcePts100ns=-1);
     void close();
     bool beginSourceInput();
     bool beginSourceProcessing();
@@ -85,6 +85,7 @@ private:
     std::chrono::steady_clock::time_point nextCostLog_{};
     std::chrono::steady_clock::time_point lastXessFrame_{};
     pipeline::FrameIdentity lastXessIdentity_{};
+    int64_t lastXessPts100ns_=-1;
     bool xessWasEnabled_=false;
     bool xessFailed_=false;
     bool xessGenerationSuppressed_=false;

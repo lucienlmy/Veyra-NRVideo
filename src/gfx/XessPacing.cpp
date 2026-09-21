@@ -25,6 +25,7 @@ struct PacingState {
     std::mutex statsMutex;
     ThunkHook hook;
     bool installed = false;
+    const bool traceEnabled=GetEnvironmentVariableW(L"VEYRA_TEST_TRACE_XESS",nullptr,0)>0;
     uint8_t* base = nullptr;
     PresentFn native = nullptr;
     SchedFn sched = nullptr;
@@ -209,7 +210,15 @@ int64_t detour(void* ctx, uint32_t a2, uint32_t a3, uint64_t a4, void* arg5, voi
         else if (caller == s.base + XessPacing::kLastFrameCallerRva) tryPace(ctx, arg5, arg6, arg7, true);
         else {std::lock_guard statsLock(s.statsMutex);++s.forwarded;}
     }
+    const auto host=[](){return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()/100;};
+    const auto nativeBegin=s.traceEnabled?host():0;
     const auto result=s.native(ctx, a2, a3, a4, arg5, arg6, arg7);
+    if(s.traceEnabled){
+        diagnostics::FrameTraceEvent event;event.kind=diagnostics::TraceKind::ProviderOutput;
+        event.host100ns=event.presentEndHost=host();event.presentBeginHost=nativeBegin;
+        event.milliseconds=double(event.presentEndHost-nativeBegin)/10000;
+        Logger::instance().recordFrame(event);
+    }
     LARGE_INTEGER now{};QueryPerformanceCounter(&now);
     std::lock_guard statsLock(s.statsMutex);
     if(s.lastPresentQpc!=0){

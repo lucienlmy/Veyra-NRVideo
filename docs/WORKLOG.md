@@ -5771,3 +5771,21 @@ run or physical display measurements. Present cycle wall includes the return
 path before afterPresent, not pure GPU or exact DXGI duration. Next: distinguish
 provider scheduler waits from resource waits before selecting a candidate.
 No performance improvement accepted, publication or goal completion claimed.
+
+Follow-up: isolated real-source-PTS candidate behind
+VEYRA_TEST_XESS_SOURCE_TIMING=1, default off. Only consecutive source IDs and
+valid history supply positive PTS delta; resets/skips/unknown sources retain
+zero. Added opt-in per-provider-output return trace (no guessed source ID).
+Builds succeeded; logs/fg-stability-{source-timing,output-trace}-20260921.log.
+Repeated30s same-EXE off/on heavy XeSS4: source39.94->52.30/s,
+SDK retained return mean7.693->5.367ms, P99 23.25->18.58ms,
+process age-to-return P95 56.35->38.84ms. Under1ms burst fraction remains
+~23-24%, so no complete uniform-cadence acceptance. Native4X and native/SR2X
+candidate short smokes retain60 source/s; all exit0/failed=false.
+Evidence tests/fg-stability-20260921/{source-timing-b,output-off,output-on,
+source-timing-2x}; exact argv/hash/environment in each result.json.
+See FG_STABILITY_PROGRESS_2026-09-21.md for figures, scopes and next checks.
+Analyzer's3 synthetic tests pass; diff check passes. One combined shell
+off/on loop was policy-rejected before execution; split into independent
+invocations without the unnecessary environment removal and both completed.
+No new runtime, published package replacement, push or goal completion.

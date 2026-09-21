@@ -21,6 +21,10 @@ def analyze(path):
               for line in text.splitlines() if line.startswith("event=")]
     cycles = {}
     presents = [row for row in events if row["event"] == "Present"]
+    outputs = sorted((row for row in events if row["event"] == "ProviderOutput"),
+                     key=lambda row: int(row["presentEndHost"]))
+    output_gaps = [(int(current["presentEndHost"]) - int(previous["presentEndHost"])) / 10000
+                   for previous, current in zip(outputs, outputs[1:])]
     for event in events:
         if not event["event"].startswith("Xess"):
             continue
@@ -69,6 +73,9 @@ def analyze(path):
     header = re.search(r"Frame trace: records=(\d+) capacity=(\d+) overwritten=(\d+)", text)
     return dict(scope="Retained bounded CPU trace only; Present wall time includes descheduling, not GPU execution or scanout.",
                 overwritten=int(header[3]) if header else None, cycles=len(rows), linkedCycles=len(linked),
+                sdkReturnIntervalMs=distribution(output_gaps),
+                sdkReturnGapsOver10ms=sum(gap>10 for gap in output_gaps),
+                sdkReturnGapsUnder1ms=sum(gap<1 for gap in output_gaps),
                 missingOrAmbiguousLinks=len(rows)-len(linked),
                 preparationCycleMismatch=sum(row["preparationCycle"] not in (None, 0, row["cycle"]) for row in rows),
                 sleepMs=distribution([row["sleepMs"] for row in rows if row["sleepMs"] is not None]),

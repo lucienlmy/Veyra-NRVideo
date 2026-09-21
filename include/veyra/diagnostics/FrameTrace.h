@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace veyra::diagnostics {
-enum class TraceKind { Submitted, Ready, Present, Gpu, Reset, Cancelled, FrameReady, Discarded, XessSleep, XessBind, XessPresent };
+enum class TraceKind { Submitted, Ready, Present, Gpu, Reset, Cancelled, FrameReady, Discarded, XessSleep, XessBind, XessPresent, ProviderOutput };
 inline const char* traceKindName(TraceKind kind) {
     switch(kind){
     case TraceKind::Submitted:return "Submitted";
@@ -19,6 +19,7 @@ inline const char* traceKindName(TraceKind kind) {
     case TraceKind::XessSleep:return "XessSleep";
     case TraceKind::XessBind:return "XessBind";
     case TraceKind::XessPresent:return "XessPresent";
+    case TraceKind::ProviderOutput:return "ProviderOutput";
     }
     return "Unknown";
 }

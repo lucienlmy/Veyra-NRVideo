@@ -73,7 +73,7 @@ bool VideoPresenter::open(gfx::D3D12DeviceContext& ctx,HWND window,pipeline::Enh
     return true;
 }
 void VideoPresenter::refresh(ID3D12Device* device){for(unsigned i=0;i<3;++i){Microsoft::WRL::ComPtr<ID3D12Resource> bb;if(SUCCEEDED(sink_.swapChain()->GetBuffer(i,IID_PPV_ARGS(&bb))))device->CreateRenderTargetView(bb.Get(),nullptr,{rtvs_->GetCPUDescriptorHandleForHeapStart().ptr+size_t(i)*inc_});}}
-bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& sharedRing,pipeline::EnhanceGraph& graph,unsigned slot,bool generated,bool referencesValid,int comparison,bool baseReference,float split,pipeline::FrameIdentity identity,PreviewView view) {
+bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& sharedRing,pipeline::EnhanceGraph& graph,unsigned slot,bool generated,bool referencesValid,int comparison,bool baseReference,float split,pipeline::FrameIdentity identity,PreviewView view,int64_t sourcePts100ns) {
     auto& ring=presentationQueue_?presentationRing_:sharedRing;
     auto* fence=presentationFence_?presentationFence_.Get():ctx.fence();
     const auto presentStart=std::chrono::steady_clock::now();
@@ -173,7 +173,13 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
         // Present intervals include the provider's own wait. Do not feed that
         // wait back into its pacing. Intel explicitly permits zero when an
         // independent frame-time estimate is unavailable.
-        constexpr float elapsed=0.0f;
+        float elapsed=0.0f;
+        static const bool sourceTiming=GetEnvironmentVariableW(L"VEYRA_TEST_XESS_SOURCE_TIMING",nullptr,0)>0;
+        if(sourceTiming&&!reset&&lastXessPts100ns_>=0&&sourcePts100ns>lastXessPts100ns_&&
+           identity.sourceFrameId==lastXessIdentity_.sourceFrameId+1){
+            const auto delta=double(sourcePts100ns-lastXessPts100ns_)/10000;
+            if(delta>=0.125&&delta<500)elapsed=float(delta);
+        }
         auto* motion=graph.presentMotion(slot);
         auto* depth=graph.presentDepth();
         if(enabled){
@@ -201,7 +207,7 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
             if(!xess->tag(list,bb,mapped,depth,fullBuffer,true,reset,elapsed)){xessFailed_=true;return false;}
             gpuTimer_.mark(list,diagnostics::GpuStage::FgBatch,true);
         }else if(!xess->tag(list,bb,motion,depth,fgRect,false,reset,elapsed)){xessFailed_=true;return false;}
-        lastXessFrame_=now;lastXessIdentity_=identity;xessWasEnabled_=enabled;
+        lastXessFrame_=now;lastXessIdentity_=identity;xessWasEnabled_=enabled;lastXessPts100ns_=sourcePts100ns;
         previousXessView_=view;previousXessWidth_=rc.right;previousXessHeight_=rc.bottom;
     }
     if(auto* fsr=sink_.fsr()){
