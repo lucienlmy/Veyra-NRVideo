@@ -1,5 +1,33 @@
 # Veyra 工作记录
 
+## 2026-09-21 XeSS one-pending experiment rejected; DLSS evidence review
+
+Continued from a0e39ea on codex/fg-stability-20260921, pre-work checkpoint
+d2ae8ee preserved. One-pending XeSS startup-exempt revision built successfully;
+20s fg-utilization-matrix.py sr-nr-xess4 completed in
+E:/项目/Veyra/tests/fg-stability-20260921/one-pending-startup-on.
+Source throughput49.48/s vs52.25/s control, despite lower age and fewer short
+SDK intervals. Rejected per acceptance contract. Removed both experimental
+EngineController lines; rebuilt using scripts/build-isolated.ps1, target
+veyra, existing playback-nr-20260920 build and frame-pacing dependency cache.
+Reverted build exit0, log E:/项目/Veyra/logs/
+fg-stability-one-pending-reverted-20260921.log. Restored isolated app EXE;
+no package replacement. Details in FG_STABILITY_PROGRESS_2026-09-21.md.
+
+Reused baseline DLSS traces rather than repeating a performance matrix.
+sr-nr-dlss6 retained362 real-only groups;361 carry rejection markers and
+single-frame submissions, zero retained expired discards. Full123 six-frame
+GPU groups average22.919ms measured serial stages (not physical latency),
+FG batch10.806ms. Native NR6 full241 measured groups average18.066ms;
+85 real-only groups all rejection-marked. Thus rejection/seed cycles explain
+the observed holes, while measured work exceeds16.667ms in these averages.
+No proof yet that rejection estimates are optimal; no gate removal justified.
+Evidence: E:/项目/Veyra/tests/fg-utilization-20260921/baseline/
+{native-nr-dlss6,sr-nr-dlss4,sr-nr-dlss6}/result.json and stdout.log.
+Next: compare per-group predicted backlog/prefix with actual GPU stages and
+history-seed cost before choosing one DLSS candidate. P2-P6 remain pending;
+goal active. No runtime edits, push or publication.
+
 ## 2026-09-21 NR/FG local package closure
 
 Source checkpoint f029707, tag checkpoint/nr-fg-followup-verified-20260921;

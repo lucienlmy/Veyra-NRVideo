@@ -186,6 +186,35 @@ unresolved. No software performance claim is extended to other GPUs.
 
 ## Fence readiness attribution
 
+### Bounded one-pending experiment: reverted
+
+Temporarily limited XeSS enhancement admission to one pending source batch,
+with source timing enabled. The first version blocked file startup (one
+source, zero generated); startup requires two prepared batches. One revision
+exempted startup, following the existing low-queue gate's contract.
+
+Revised 20s run `one-pending-startup-on/sr-nr-xess4` completed: 867 sources,
+2034 generated, failed=false. Retained source submission was49.48/s versus
+52.25/s in fence-on. Process age P95 fell to22.444ms from38.815ms. Retained
+SDK intervals: mean6.019ms, P95 14.354ms, P99 15.452ms, max35.101ms;
+2/1412 intervals below1ms and91 above10ms. Fence entry-to-deadline mean
+2.128ms, P95 2.909ms, all331 samples pending then ready.
+
+The reduced fence waiting supports shared-queue backlog as a contributor,
+but the source coverage regression and remaining uneven intervals fail the
+acceptance contract. Both experimental code lines were removed. No default
+change, no new wait, no accepted optimization. Do not repeat a one-batch gate
+without new evidence addressing lost source throughput. These are CPU/SDK
+timings, not scanout or physical display latency.
+
+Build logs: `E:/项目/Veyra/logs/fg-stability-one-pending-startup-20260921.log`
+and `fg-stability-one-pending-reverted-20260921.log`. Evidence directories
+under `E:/项目/Veyra/tests/fg-stability-20260921/`: `one-pending-on` (startup
+failure) and `one-pending-startup-on` (revised rejection). Existing matrix
+command, sr-nr-xess4,20 seconds; trace/source-timing/one-pending environment
+enabled. Analyzer output saved adjacent to trace. Next move to P2 DLSS;
+XeSS queue separation still requires an explicit provider retirement contract.
+
 Read-only tracing now samples the audited scheduler fence on entry and at
 timestamp calculation, with the native lookup target. Only our synchronous
 index1 scheduler calls are sampled; pointers are thread-local and cleared
