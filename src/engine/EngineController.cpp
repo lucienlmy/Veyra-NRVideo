@@ -68,13 +68,11 @@ void EngineController::post(std::function<void()> task){ {std::lock_guard lock(m
 bool EngineController::idle()const{std::lock_guard lock(mutex_);return !busy_&&!pending_;}
 void EngineController::open(HWND video,const std::wstring& path,PlayerOptions opts){
     const bool captureReplay=opts.captureReplayForTest;
-    const bool disableAdmission=opts.captureReplayDisableFgAdmissionForTest;
     // Diagnostics-only PlayerOptions fields never enter EnhancementSettings;
     // keep them across the snapshot round-trip below.
     const bool captureCpuUnpack=opts.captureCpuUnpack;
     {std::lock_guard lock(mutex_);snapshot_={};activeFlow_.reset();previewView_={};fgMultiFrameMaxCap_=0;xessMaxInterpolatedFramesCap_=0;fsrMaxGeneratedFramesCap_=0;snapshot_.sessionId=++sessionId_;snapshot_.transport=TransportState::Opening;savePath_.clear();desired_=opts.snapshot();desired_.revision=++nextRevision_;snapshot_.desired=desired_;opts=PlayerOptions::from(desired_);}
     opts.captureReplayForTest=captureReplay;
-    opts.captureReplayDisableFgAdmissionForTest=disableAdmission;
     opts.captureCpuUnpack=captureCpuUnpack;
     post([this,video,path,opts]{paused_=false;seekSeconds_=-1;run(video,path,opts);});
 }
@@ -182,7 +180,6 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
     const bool isCapture=physicalCapture||options.captureReplayForTest||isRemote||isScreen;
     // File replay has no hardware arrival clock; retain its continuous PTS anchor.
     const bool pairAnchoredLive=physicalCapture||isRemote||isScreen;
-    const bool useLiveFgAdmission=!options.captureReplayDisableFgAdmissionForTest;
     source::IFrameSource* activeSource=physicalCapture?static_cast<source::IFrameSource*>(&captureSource):&source;
     if(isScreen)activeSource=&screenSource;
 #ifdef VEYRA_ENABLE_REMOTEPLAY
@@ -1076,7 +1073,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                     pairLatency.select(host100ns(),legacyPairDelay,liveInterval,previewFgMultiplier):legacyPairDelay;
                 // DLSS can reseed after a skipped pair. XeSS
                 // owns generation inside its presenter and has no graph admission.
-                if(isCapture&&!rereadCached&&useLiveFgAdmission&&!presentSinkFrameGeneration(options.settings.frameGenerationBackend)){
+                if(isCapture&&!rereadCached&&!presentSinkFrameGeneration(options.settings.frameGenerationBackend)){
                     const auto presentP95=livePresentGpu.p95();
                     admitFg=[&,presentP95](const pipeline::FrameBatch& batch,bool warmingHistory){
                         // Physical capture and PS5 delivery clocks are not

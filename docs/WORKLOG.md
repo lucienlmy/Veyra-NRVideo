@@ -1,5 +1,47 @@
 # Veyra 工作记录
 
+## 2026-09-21 生成 1.4.4 XeSS A/B 测试包
+
+按用户要求生成两个可并行对比的 1.4.4 便携包。A 使用当前工作区
+`0de0a1d4175ebb392d9f2f425df49f504548b2c8` 的 XeSS；B 在独立 worktree
+`E:/项目/Veyra/worktrees/xess143-compare-20260921-r1` 中仅恢复
+`v1.4.3` 的 XeSS pacing/presenter、`frameRenderTime=0` 和旧的
+`XessGenerationGate`，其余 1.4.4 修复保持同一基线。比较说明见
+`docs/XESS_1_4_4_AB_COMPARE_2026-09-21.md`。
+
+两边均用 `scripts/build-isolated.ps1` 编译 Release `veyra`，随后用
+`scripts/package-portable.ps1` 打包；编译和打包均 exit 0。包审计均为 123 文件、
+`forbiddenFiles=0`，没有把 SDK 或运行库加入源码 Git。A ZIP 位于
+`E:/项目/Veyra/test-packages/1.4.4-xess-current-20260921-r2/`，SHA256
+`03567900697B359C8BFC6DC797929F81167D331016F5C2745BB176E31C55FA11`；B ZIP 位于
+`E:/项目/Veyra/test-packages/1.4.4-xess143-20260921-r1/`，SHA256
+`D6077DCE8A977203AF57E8980B5FDDFBC176340C7F610396FFBB312ACB2E75EF`。
+
+同一 `p001.mp4`、XeSS 4X、NR/SR 关闭、12 秒烟测：A exit 0，639 源帧/1908 生成帧；
+B exit 0，668 源帧/1995 生成帧；两边日志均显示 provider `framesPresented=4`，
+无失败。该测试只证明可运行和实际进入 XeSS，不代表画质、功耗或屏幕扫描验收。
+未合并 main、未 push、未发布 Release。
+
+## 2026-09-21 整理 1.4.3 之后的修复总账
+
+新增 `docs/POST_1_4_3_REPAIR_LEDGER_2026-09-21.md`，按“已进入产品、交付/测试、
+诊断研究、已撤回、仍未解决”整理 `v1.4.3`（`3b4570e`）到当前分支的全部变化。
+明确记录 1.4.4beta 仍是本地包；真 SR 高倍率、独立降噪、提供方输出限帧和实卡/
+物理延迟没有被包装成已修复。同步在 `CURRENT_STATUS.md` 增加入口。仅文档修改，
+没有构建、合并 main、推送或发布。
+
+## 2026-09-21 收缩帧生成重构方案，移除已证伪方向
+
+按用户要求仅修改方案文档，没有继续清理源码、测试入口、构建或打包。更新
+`docs/FG_RUNTIME_REPAIR_PLAN_2026-09-21.md`：将同组 GPU 成本估算、Present
+清屏、光流复制、原生光流尺寸直传 DLSSG、提高队列优先级、XeSS 单 pending、
+NVOF/Video SR 重叠、全局取消 DLSS admission、固定等待/盲目加队列、无条件接纳
+晚到生成，以及简单 CPU/presenter 拆线程、拆 owner、逐输出发布和 FG/Enhance
+并行重叠从待实施方案删除。失败数据仍保留在实验索引和原始记录中，防止重复
+尝试；保留 XeSS 真实源时间提示、资源租约/provider 退休、生命周期和 DLSS
+真实 admission 归因等尚未被证伪的方向。未修改上述已有代码改动，未合并 main、
+未推送、未发布。
+
 ## 2026-09-21 Magpie upstream refresh and source audit
 
 User requested upstream source inspection. Existing clean clone at
@@ -5945,3 +5987,26 @@ these are not new fixes and cannot be reintroduced without a different dependenc
 boundary and new evidence. The remaining new work is complete resource retirement
 (including guidance, descriptors, allocators, readback and backbuffer), XeSS
 post-Present provider retirement, and separate history/display state accounting.
+
+## 2026-09-21 Failed FG experiment cleanup
+
+Removed executable remnants of two rejected scheduling experiments. The production
+`captureReplayDisableFgAdmissionForTest` option and its save/restore path are gone;
+capture/replay now always uses the production DLSS admission policy. The
+`--overload-baseline` integration-test mode and its comparison-only assertions were
+removed, while the normal `--overload` test still verifies admission skips under
+load. The rejected `VEYRA_TEST_OVERLAP_VIDEO_SR` path was removed from
+`EnhanceGraph`, restoring the serialized NVOF -> Video SR order. History remains in
+`FG_EXPERIMENT_INDEX_2026-09-21.md`, but no executable switch remains to repeat
+either failed direction.
+
+Verification: repository-wide search found no references to the removed option,
+baseline flag, overlap environment variable, or overlap locals. `git diff --check`
+passed. Build and focused integration-test results are recorded below after running
+them; no runtime, package, merge, push, or release was performed.
+
+The first focused `--overload` run completed the playback/resource checks but
+reported zero FG candidates on the available local media/runtime, so an attempted
+assertion that an admission skip must be nonzero was removed as an invalid
+environment-dependent test requirement. This does not count as FG runtime
+acceptance; it only verifies the cleanup build and the normal replay path.

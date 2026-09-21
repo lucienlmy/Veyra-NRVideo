@@ -51,7 +51,6 @@ int wmain(int argc,wchar_t** argv){
         auto options=PlayerOptions::from(settings);
         const std::wstring source=argv[1];
         options.captureReplayForTest=!fileProfile&&!source.starts_with(L"capture:")&&!source.starts_with(L"capture2:");
-        options.captureReplayDisableFgAdmissionForTest=std::wstring_view(argv[4])==L"off";
         engine.open(window,source,options);
         const auto opened=Clock::now();auto started=Clock::time_point{};
         int reported=-1;bool stalled=false,cleared=false;

@@ -98,7 +98,7 @@ int wmain(int argc,wchar_t**argv){
     }
 #endif
     SetEnvironmentVariableW(L"VEYRA_VERBOSE_FRAME_LOGS",L"1");
-    if(argc!=3&&!(argc==4&&(wcscmp(argv[3],L"--backend-recovery")==0||wcscmp(argv[3],L"--nr-first")==0||wcscmp(argv[3],L"--seek-stress")==0||wcscmp(argv[3],L"--half-rate")==0||wcscmp(argv[3],L"--overload")==0||wcscmp(argv[3],L"--overload-baseline")==0||wcscmp(argv[3],L"--file-overload")==0||wcscmp(argv[3],L"--source-gap")==0||wcscmp(argv[3],L"--file-endpoint")==0||wcscmp(argv[3],L"--file-continuity")==0||wcscmp(argv[3],L"--file-fg-recovery")==0||wcscmp(argv[3],L"--reset-rollback")==0)))return 2;SetProcessDPIAware();CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+    if(argc!=3&&!(argc==4&&(wcscmp(argv[3],L"--backend-recovery")==0||wcscmp(argv[3],L"--nr-first")==0||wcscmp(argv[3],L"--seek-stress")==0||wcscmp(argv[3],L"--half-rate")==0||wcscmp(argv[3],L"--overload")==0||wcscmp(argv[3],L"--file-overload")==0||wcscmp(argv[3],L"--source-gap")==0||wcscmp(argv[3],L"--file-endpoint")==0||wcscmp(argv[3],L"--file-continuity")==0||wcscmp(argv[3],L"--file-fg-recovery")==0||wcscmp(argv[3],L"--reset-rollback")==0)))return 2;SetProcessDPIAware();CoInitializeEx(nullptr,COINIT_MULTITHREADED);
     std::filesystem::create_directories(argv[2]);Logger::instance().openFile((std::filesystem::path(argv[2])/"engine.log").wstring());Logger::instance().setConsoleEnabled(false);
     HWND window=CreateWindowExW(0,L"STATIC",L"Live scheduler replay",WS_POPUP,0,0,960,540,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
     if(!window)return 3;engine::EngineController engine;engine::PlayerOptions options;options.nr=false;options.fg=false;options.captureReplayForTest=true;
@@ -119,7 +119,7 @@ int wmain(int argc,wchar_t**argv){
     const bool fileContinuity=argc==4&&wcscmp(argv[3],L"--file-continuity")==0;
     if(fileContinuity){options.captureReplayForTest=false;options.nr=options.fg=true;options.realtime=false;options.settings.frameGenerationBackend=engine::FrameGenerationBackend::XeSS;engine.setVolume(0,true);}
     if(fileEndpoint){options.captureReplayForTest=false;SetEnvironmentVariableW(L"VEYRA_TEST_FILE_ENDPOINT_LOSS",L"1");engine.setVolume(0,true);}
-    if(overload){options.nr=options.sr=options.fg=true;options.realtime=false;options.fgMultiplier=4;options.settings.videoSrQuality=4;options.captureReplayDisableFgAdmissionForTest=std::wstring(argv[3]).ends_with(L"-baseline");SetEnvironmentVariableW(L"VEYRA_VERBOSE_FRAME_LOGS",nullptr);}
+    if(overload){options.nr=options.sr=options.fg=true;options.realtime=false;options.fgMultiplier=4;options.settings.videoSrQuality=4;SetEnvironmentVariableW(L"VEYRA_VERBOSE_FRAME_LOGS",nullptr);}
     if(halfRate)options.settings.content=engine::ContentRate::Capture60To30;
     if(fileOverload){options.captureReplayForTest=false;options.nr=options.sr=options.fg=true;options.realtime=false;options.fgMultiplier=4;options.settings.videoSrQuality=4;}
     int failures=0;auto check=[&](bool pass,const char* s){std::cout<<(pass?"PASS ":"FAIL ")<<s<<std::endl;if(!pass)++failures;};
@@ -284,8 +284,7 @@ int wmain(int argc,wchar_t**argv){
         check(until([](const auto& s){return s.frames>=150;},35),"native4K NR + VSR high + FG4 completes bounded overload replay");
         const auto s=engine.snapshot();const auto& c=s.metrics.flow.counters;
         check(c.fgCandidate==c.fgEvaluated+c.fgSkippedBeforeEval+c.fgSkippedForReset&&c.presentationBatchHighWater<=2&&c.commandSlotHighWater<=6,"overload work accounting and resource bounds");
-        check(options.captureReplayDisableFgAdmissionForTest?c.fgSkippedBeforeEval==0:c.fgSkippedBeforeEval>0,"overload comparison uses requested admission policy");
-        std::cout<<"OVERLOAD baseline="<<options.captureReplayDisableFgAdmissionForTest<<" frames="<<s.frames<<" processedFps="<<s.fps<<" realPresented="<<c.realPresented<<" generatedPresented="<<c.generatedPresented<<" expired="<<c.generatedExpiredAfterEval<<" skipped="<<c.fgSkippedBeforeEval<<" evaluated="<<c.fgEvaluated<<" ageP95Ms="<<s.captureAgeP95Ms<<std::endl;
+        std::cout<<"OVERLOAD frames="<<s.frames<<" processedFps="<<s.fps<<" realPresented="<<c.realPresented<<" generatedPresented="<<c.generatedPresented<<" expired="<<c.generatedExpiredAfterEval<<" skipped="<<c.fgSkippedBeforeEval<<" evaluated="<<c.fgEvaluated<<" ageP95Ms="<<s.captureAgeP95Ms<<std::endl;
         engine.stop();check(until([&](const auto&){return engine.idle();},5),"overload shutdown releases leases");DestroyWindow(window);CoUninitialize();return failures?1:0;
     }
     check(until([](const auto& s){return s.capture&&s.frames>=8&&s.metrics.submitted>=4;}),"file replay runs actual live worker and presents");

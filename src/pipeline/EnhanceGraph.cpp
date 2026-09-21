@@ -1588,9 +1588,6 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
         ++metrics_.srEvaluateCount;gpuTimer_.mark(list,GpuStage::Sr,true);
         return true;
     };
-    bool videoSrReady=false;
-    const bool overlapVideoSr=srEnabled_&&videoSrBackend_&&!desc_.nrBeforeSr&&
-        GetEnvironmentVariableW(L"VEYRA_TEST_OVERLAP_VIDEO_SR",nullptr,0)>0;
     // Guidance from original source-space color before SR/NR. Queue waits are GPU-side.
     bool haveFlow = false;
     const bool runMotion = nvofStandalone_ || presentSinkFg() || fgEnabled_ || (srEnabled_ && (desc_.videoSrQuality==0||desc_.videoSrQuality==engine::kVideoSrFsr));
@@ -1630,7 +1627,7 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
         }
         if (prevValid_ && !gpuDis_) {
             if(!amdOf_){
-            if(!overlapVideoSr)gpuTimer_.mark(list,GpuStage::Flow);
+            gpuTimer_.mark(list,GpuStage::Flow);
             if(!ring_.submitAndSignal(slot))return false;
             cpuTrace.mark("flowPrepare");
             haveFlow=nvof_->execute(ring_.lastSignaledValue(),st);
@@ -1644,26 +1641,9 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
                     if(FAILED(hr))veyra::log::error("graph",std::format("NVOF output queue wait value={} hr=0x{:X}",value,unsigned(hr)));
                     return SUCCEEDED(hr);
                 };
-                if(overlapVideoSr){
-                    // Video SR consumes color only. Keep NVOF resources intact
-                    // and submit this independent work before its output wait.
-                    list=ring_.acquireNext(slot,st);
-                    if(!list||!runVideoSr()){
-                        (void)waitForFlow();
-                        return false;
-                    }
-                    videoSrReady=true;
-                    // Flow now measures the uncovered queue wait, not SR twice.
-                    gpuTimer_.mark(list,GpuStage::Flow);
-                    if(!ring_.submitAndSignal(slot)){
-                        (void)waitForFlow();
-                        return false;
-                    }
-                }
                 if(!waitForFlow())return false;
             }
             list=ring_.acquireNext(slot,st);if(!list)return false;
-            if(overlapVideoSr&&!haveFlow)gpuTimer_.mark(list,GpuStage::Flow);
             gpuTimer_.mark(list,GpuStage::Flow,true);
             }
             if(haveFlow) {
@@ -1727,7 +1707,7 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
         tracker_.uavBarrier(list,workRgba_.Get());
         tracker_.transition(list,workRgba_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     } else if(srEnabled_&&videoSrBackend_){
-        if(!videoSrReady&&!runVideoSr())return false;
+        if(!runVideoSr())return false;
     } else if (srEnabled_ && srBackend_ && srBackend_->created()) {
         gpuTimer_.mark(list,GpuStage::Sr);
         tracker_.transition(list, workRgba_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
