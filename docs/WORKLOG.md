@@ -5706,3 +5706,24 @@ This is software timing only, not display latency or subjective quality proof.
 No independent denoiser was added because required VFX/NvCV/CUDA GPU-only
 prerequisites and distribution identity remain unavailable. No guidance or
 XeSS rollback was justified by the existing evidence. No release or shutdown.
+
+## 2026-09-21 FG architecture reassessment
+
+User cancelled further Magpie binary benchmarking and requested diagnosis and
+remedies. Reviewed active e71d715 worktree and clean Magpie fork
+3841698348bfb246623d4acf791984c8b68a577b: DLSS interop/fences, frontend FIFO,
+capacity/deadlines, XeSS source timing, Veyra admission/history recovery and
+existing matched 1.4.3 evidence. Added FG_PIPELINE_REASSESSMENT_2026-09-21.md
+with evidence boundaries, priorities and rollback criteria. Existing dirty
+experiments preserved. No product changes, benchmarks, builds, binary artifacts,
+runtime changes, publication or shutdown. Verification: git diff --check.
+
+## 2026-09-21 补帧稳定性与现有功能收尾方案
+
+按用户要求编写 FG_STABILITY_COMPLETION_PLAN_2026-09-21.md，包含证据基线、
+XeSS时间/帧对应、DLSS整组空档、输出限帧、UI/字幕/采集回归、NR防闪和独立
+降噪的分阶段方案。规定逐项存档、有限实验、全段节奏/源覆盖/帧龄/画质联合
+验收和失败回退。更新CURRENT_STATUS入口及三份旧计划的替代说明，纠正旧的
+默认限帧和XeSS时间提示结论。保留所有既有未提交代码及实验，不启动新目标、
+测试、构建或发布。本轮无新增二进制/临时产物。文档检查使用git diff --check
+及新方案的本地Markdown链接存在性校验；不将文档检查算产品验收。

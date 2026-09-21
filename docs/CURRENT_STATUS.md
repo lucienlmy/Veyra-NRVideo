@@ -1,5 +1,29 @@
 # 当前项目状态 / Current Status
 
+## 当前执行入口（2026-09-21，链路复核后）
+
+最新方案：[补帧稳定性与现有功能收尾](FG_STABILITY_COMPLETION_PLAN_2026-09-21.md)。
+本轮只完成方案和文档更新，尚未按新方案改代码或运行测试。
+开发工作区为 `E:/项目/Veyra/worktrees/playback-nr-20260920`，
+分支 `codex/fg-utilization-20260921`、HEAD `e71d715`；现存未提交实验不等于已验收。
+正式版仍为1.4.3，最新本地交付仍为下述1.4.4beta。
+
+- **XeSS**：真实1080p到4K超分＋NR＋4X的源帧连续性比1.4.3差；旧版反复
+  关闭补帧，不能直接恢复它并宣称4X修好。果冻感、功耗波动尚未解决。
+- **DLSS**：4X/6X重负载均匀呈现仍未通过；不能将原生4K输入的高FPS套用到真实超分。
+- **输出限制**：默认不限制；XeSS/FSR输出限帧尚未完成。
+- **NR**：防闪默认关闭、部分样本验证通过，快速游戏画质及重负载有待验收；
+  独立降噪未接入，模型风格仍为0/1/2，NR叠层继续暂缓。
+- **UI/字幕/采集**：已有修复和局部回归不撤销；快速滚动、物理跨屏、受影响
+  设备及HDR浮窗观感不得算全面通过。杜比视界新处理继续暂缓。
+
+最新同条件证据见[版本对照](RELEASE_143_SCHEDULING_COMPARISON_2026-09-21.md)，
+原因与未知项见[链路审查](FG_PIPELINE_REASSESSMENT_2026-09-21.md)。
+下文按历史顺序保留；“未发现回退”“通过”“最新”等只适用于对应日期和工况，
+与本节冲突时以本节及其引用证据为准。
+
+## 既有交付与历史记录
+
 2026-09-21 local test package delivered from source checkpoint `f029707`:
 `E:/项目/Veyra/test-packages/1.4.4beta-20260921-nr-followup/`.
 Seven portable smokes, packaged DLSS/XeSS switching and 124-file ZIP

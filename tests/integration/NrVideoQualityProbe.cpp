@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <array>
+#include <string_view>
 #include <d3d12sdklayers.h>
 #include <vector>
 
@@ -55,7 +56,9 @@ bool dumpCrop(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& ring,
 }
 }
 int wmain(int argc,wchar_t** argv){
-    if(argc!=5)return 2; // source, output directory, start seconds, frame count
+    if(argc!=5&&argc!=6)return 2; // source, output directory, start seconds, frame count, optional video-sr4k
+    const bool videoSr4k=argc==6&&std::wstring_view(argv[5])==L"video-sr4k";
+    if(argc==6&&!videoSr4k)return 2;
     const double start=_wtof(argv[3]);const unsigned count=unsigned(_wtoi(argv[4]));
     if(start<0||count<2||count>240)return 2;
     const std::filesystem::path directory=argv[2];std::filesystem::create_directories(directory);
@@ -68,7 +71,7 @@ int wmain(int argc,wchar_t** argv){
     open.path=argv[1];open.preferHardwareDecode=false;
     if(!source.open(open))return 2;
     const auto info=source.info();
-    // Same-size SDR avoids resampling the motion crop or hiding colour conversion.
+    // Keep input/motion at 1080p; the optional SR case exercises a 4K working image.
     if(info.width!=1920||info.height!=1080)return 2;
     if(start>0&&!source.seek({int64_t(start*1000),1000}))return 2;
     pipeline::EnhanceGraph graph(ctx,ring);pipeline::EnhanceGraphDesc settings;
@@ -76,6 +79,10 @@ int wmain(int argc,wchar_t** argv){
     settings.sourceHeight=settings.workHeight=settings.nrHeight=settings.flowHeight=info.height;
     settings.enableNr=true;settings.nrTemporal=true;settings.enableFg=false;settings.enableSr=false;
     settings.enableNvofStandalone=true;settings.runtimeAbsPath=runtime::localRuntimeDirectory().wstring();
+    if(videoSr4k){
+        settings.workWidth=3840;settings.workHeight=2160;
+        settings.enableSr=true;settings.videoSrQuality=3;
+    }
     if(!graph.initialize(settings)||!graph.createViews())return 2;
     std::array<std::ofstream,4> streams;
     const char* names[]={"base.rgba16f","raw.rgba16f","filtered.rgba16f","motion.rg16f"};
@@ -87,7 +94,7 @@ int wmain(int argc,wchar_t** argv){
         if(source.read(packet,&frame)!=source::SourceReadStatus::Frame){ok=false;break;}
         if(packet.pts.toDouble()<start)continue;
         pipeline::EnhanceGraph::FrameOutputs output;
-        if(!graph.process(frame,packet.pts.toDouble()*1000,captured==0,output,packet.sequence,&packet.colorInfo)||!ring.waitIdle()){ok=false;break;}
+        if(!graph.process(frame,packet.pts.toDouble()*1000,captured==0||(videoSr4k&&captured==count/2),output,packet.sequence,&packet.colorInfo)||!ring.waitIdle()){ok=false;break;}
         ID3D12Resource* textures[]={graph.diagnosticNrBase(),graph.diagnosticNrRaw(),graph.diagnosticNrFiltered(),graph.flowResource()};
         for(unsigned i=0;i<4;++i)ok=dumpCrop(ctx,ring,textures[i],streams[i])&&ok;
         if(!ok)break;

@@ -1572,6 +1572,25 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
     if (desc_.stageMark) desc_.stageMark("yuv");
     cpuTrace.mark("color");
 
+    auto runVideoSr=[&]()->bool{
+        gpuTimer_.mark(list,GpuStage::Sr);
+        tracker_.transition(list,videoSrInput_.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        const float enc[8]={uintBits(srcW_),uintBits(srcH_),uintBits(srcW_),uintBits(srcH_),desc_.hdrWorking()?3.0f:1.0f,0,0,0};
+        blitPass_.bind(list,enc,gpuHandleOf(blitPass_,desc_.nrBeforeSr?18:0).ptr,gpuHandleOf(blitPass_,16).ptr);list->Dispatch((srcW_+15)/16,(srcH_+15)/16,1);tracker_.uavBarrier(list,videoSrInput_.Get());
+        tracker_.transition(list,videoSrInput_.Get(),D3D12_RESOURCE_STATE_COMMON);tracker_.transition(list,videoSrOutput_.Get(),D3D12_RESOURCE_STATE_COMMON);
+        if(!videoSrBackend_->evaluate(list,videoSrInput_.Get(),videoSrOutput_.Get(),desc_.videoSrQuality)){failedBackend_=engine::FailedBackend::Sr;return false;}
+        tracker_.uavBarrier(list,videoSrOutput_.Get());tracker_.transition(list,videoSrOutput_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);tracker_.transition(list,workRgba_.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        const float dec[8]={uintBits(workW_),uintBits(workH_),uintBits(workW_),uintBits(workH_),-1,0,0,0};
+        if(desc_.hdrWorking()){
+            tracker_.transition(list,videoSrInput_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            hdrVideoSrPass_.bind(list,dec,gpuHandleOf(hdrVideoSrPass_,desc_.nrBeforeSr?4:0).ptr,gpuHandleOf(hdrVideoSrPass_,3).ptr);
+        }else blitPass_.bind(list,dec,gpuHandleOf(blitPass_,17).ptr,gpuHandleOf(blitPass_,1).ptr);list->Dispatch((workW_+15)/16,(workH_+15)/16,1);tracker_.uavBarrier(list,workRgba_.Get());tracker_.transition(list,workRgba_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        ++metrics_.srEvaluateCount;gpuTimer_.mark(list,GpuStage::Sr,true);
+        return true;
+    };
+    bool videoSrReady=false;
+    const bool overlapVideoSr=srEnabled_&&videoSrBackend_&&!desc_.nrBeforeSr&&
+        GetEnvironmentVariableW(L"VEYRA_TEST_OVERLAP_VIDEO_SR",nullptr,0)>0;
     // Guidance from original source-space color before SR/NR. Queue waits are GPU-side.
     bool haveFlow = false;
     const bool runMotion = nvofStandalone_ || presentSinkFg() || fgEnabled_ || (srEnabled_ && (desc_.videoSrQuality==0||desc_.videoSrQuality==engine::kVideoSrFsr));
@@ -1611,7 +1630,7 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
         }
         if (prevValid_ && !gpuDis_) {
             if(!amdOf_){
-            gpuTimer_.mark(list,GpuStage::Flow);
+            if(!overlapVideoSr)gpuTimer_.mark(list,GpuStage::Flow);
             if(!ring_.submitAndSignal(slot))return false;
             cpuTrace.mark("flowPrepare");
             haveFlow=nvof_->execute(ring_.lastSignaledValue(),st);
@@ -1619,9 +1638,32 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
             if(!haveFlow) { ++metrics_.nvofFrameFailures; mvecSource_="zero-motion-fallback (NVOF execute failed)"; }
             else {
                 ++metrics_.nvofExecuteCount;
-                if(FAILED(context_.directQueue()->Wait(nvofOutFence_.Get(),nvof_->nextOutValue()-1)))return false;
+                auto waitForFlow=[&](){
+                    const auto value=nvof_->nextOutValue()-1;
+                    const HRESULT hr=context_.directQueue()->Wait(nvofOutFence_.Get(),value);
+                    if(FAILED(hr))veyra::log::error("graph",std::format("NVOF output queue wait value={} hr=0x{:X}",value,unsigned(hr)));
+                    return SUCCEEDED(hr);
+                };
+                if(overlapVideoSr){
+                    // Video SR consumes color only. Keep NVOF resources intact
+                    // and submit this independent work before its output wait.
+                    list=ring_.acquireNext(slot,st);
+                    if(!list||!runVideoSr()){
+                        (void)waitForFlow();
+                        return false;
+                    }
+                    videoSrReady=true;
+                    // Flow now measures the uncovered queue wait, not SR twice.
+                    gpuTimer_.mark(list,GpuStage::Flow);
+                    if(!ring_.submitAndSignal(slot)){
+                        (void)waitForFlow();
+                        return false;
+                    }
+                }
+                if(!waitForFlow())return false;
             }
             list=ring_.acquireNext(slot,st);if(!list)return false;
+            if(overlapVideoSr&&!haveFlow)gpuTimer_.mark(list,GpuStage::Flow);
             gpuTimer_.mark(list,GpuStage::Flow,true);
             }
             if(haveFlow) {
@@ -1685,19 +1727,7 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
         tracker_.uavBarrier(list,workRgba_.Get());
         tracker_.transition(list,workRgba_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     } else if(srEnabled_&&videoSrBackend_){
-        gpuTimer_.mark(list,GpuStage::Sr);
-        tracker_.transition(list,videoSrInput_.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        const float enc[8]={uintBits(srcW_),uintBits(srcH_),uintBits(srcW_),uintBits(srcH_),desc_.hdrWorking()?3.0f:1.0f,0,0,0};
-        blitPass_.bind(list,enc,gpuHandleOf(blitPass_,desc_.nrBeforeSr?18:0).ptr,gpuHandleOf(blitPass_,16).ptr);list->Dispatch((srcW_+15)/16,(srcH_+15)/16,1);tracker_.uavBarrier(list,videoSrInput_.Get());
-        tracker_.transition(list,videoSrInput_.Get(),D3D12_RESOURCE_STATE_COMMON);tracker_.transition(list,videoSrOutput_.Get(),D3D12_RESOURCE_STATE_COMMON);
-        if(!videoSrBackend_->evaluate(list,videoSrInput_.Get(),videoSrOutput_.Get(),desc_.videoSrQuality)){failedBackend_=engine::FailedBackend::Sr;return false;}
-        tracker_.uavBarrier(list,videoSrOutput_.Get());tracker_.transition(list,videoSrOutput_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);tracker_.transition(list,workRgba_.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        const float dec[8]={uintBits(workW_),uintBits(workH_),uintBits(workW_),uintBits(workH_),-1,0,0,0};
-        if(desc_.hdrWorking()){
-            tracker_.transition(list,videoSrInput_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            hdrVideoSrPass_.bind(list,dec,gpuHandleOf(hdrVideoSrPass_,desc_.nrBeforeSr?4:0).ptr,gpuHandleOf(hdrVideoSrPass_,3).ptr);
-        }else blitPass_.bind(list,dec,gpuHandleOf(blitPass_,17).ptr,gpuHandleOf(blitPass_,1).ptr);list->Dispatch((workW_+15)/16,(workH_+15)/16,1);tracker_.uavBarrier(list,workRgba_.Get());tracker_.transition(list,workRgba_.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        ++metrics_.srEvaluateCount;gpuTimer_.mark(list,GpuStage::Sr,true);
+        if(!videoSrReady&&!runVideoSr())return false;
     } else if (srEnabled_ && srBackend_ && srBackend_->created()) {
         gpuTimer_.mark(list,GpuStage::Sr);
         tracker_.transition(list, workRgba_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

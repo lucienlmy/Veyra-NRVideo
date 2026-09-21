@@ -1,5 +1,12 @@
 # Playback, subtitles, HDR and NR: investigation and proposed work
 
+> Historical proposal and implementation notes. Use
+> [current plan](FG_STABILITY_COMPLETION_PLAN_2026-09-21.md) and
+> [corrective audit](CORRECTIVE_AUDIT_2026-09-21.md) for current scope.
+> Output cap now defaults OFF; XeSS/FSR support is incomplete. The experimental
+> accepted-Present timing hint described below was reverted. Its description
+> as improved timing is not current acceptance. Dolby Vision work is deferred.
+
 Date: 2026-09-20. Status: proposal only; no implementation authorized in this request.
 
 ## Evidence and limits

@@ -1,5 +1,10 @@
 # NR / frame generation: next repair plan
 
+> Historical execution plan. Current scope and remaining work are tracked in
+> [FG stability completion plan](FG_STABILITY_COMPLETION_PLAN_2026-09-21.md).
+> The goal-active statement below describes that earlier task, not a new goal.
+> Latest matched heavy-XeSS regression evidence supersedes earlier broad comparisons.
+
 ## Scope and baseline
 
 User decision: stop investigating the general 1.4.3 versus 1.4.2 overhead
