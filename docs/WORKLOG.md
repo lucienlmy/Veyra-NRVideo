@@ -5897,3 +5897,42 @@ the same CPU submission path. Confirmed Veyra's presentationSubmitted fence is
 before sink Present and cannot be treated as provider-consumed retirement. No code
 or runtime changed, no new performance test run. Added the resource ownership and
 bounded producer/presenter admission criteria to MAGPIE_SCHEDULING_SOURCE_AUDIT.
+
+## 2026-09-21 DLSS / XeSS runtime repair research and plan
+
+User requested a concrete repair/rewrite plan covering both providers, low and
+high multipliers, and RTX 30/40 as well as the local 5070. Audited clean b69d22c
+in worktrees/playback-nr-20260920. No product changes or new GPU measurements.
+Reused pinned Magpie 3841698 and existing acceptance traces. Verified DLSS
+per-subframe fences already exist, CPU publication occurs after graph.process,
+and the heavy baseline reports graphSubmit P95 1.663ms with slotWaitMs 0;
+therefore thread separation alone is not a demonstrated cure. Rechecked
+admission/Seed/Skip and actual history-reset requirements, including prior
+no-admission regressions. Do not repeat that failed experiment as a new fix.
+
+Read the configured Intel xess-3.0.2 FG/XeLL guides for resource reuse,
+post-Present queue ordering, frame IDs, Sleep/marker order and mandatory enabled
+XeLL while FG is enabled. FG API thread-safety does not establish XeLL API
+thread-safety. The plan requires a valid owner/marker sequence before splitting
+that path; it does not disable SDK waits or guess a history-only NGX interface.
+Read-only command availability check found wpr.exe and nvidia-smi.exe on PATH,
+not xperf/PresentMon/nsys; none was launched. Two initial rg searches used
+nonexistent SDK src/include paths or Windows glob operands; corrected by
+reading the actual inc/xell and doc paths. No generated artifacts from searches.
+
+Added FG_RUNTIME_REPAIR_PLAN_2026-09-21.md: immutable frame/resource contracts,
+bounded CPU owners, separate DLSS/XeSS scheduling, conditional GPU overlap,
+measurable cadence/age/quality gates, 2X-first acceptance, hardware boundaries,
+finite experiments and rollback. Updated CURRENT_STATUS and the older P1/P2
+entry; added global no-admission regressions to FG_EXPERIMENT_INDEX. No claimed
+90% success probability, performance improvement, 30/40 acceptance, build,
+package, runtime modification, merge, push or release. This round creates only
+tracked documentation; future artifact directories are defined in the plan.
+
+Documentation verification: git status confirmed only the five intended Markdown
+files changed; git diff --check passed (existing LF-to-CRLF notices only). Checked
+99 local Markdown links across those files with Test-Path; none missing. Final
+self-review clarified per-output versus group/scanout timing, applied frame-age
+non-regression to every load, added VRAM/slot reporting, and removed the inference
+that a failed overlap experiment alone proves an unavoidable hardware limit.
+No build or runtime test was needed for this documentation-only change.

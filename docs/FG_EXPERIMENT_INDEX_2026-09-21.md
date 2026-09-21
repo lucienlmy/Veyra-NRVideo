@@ -14,6 +14,7 @@
 | NVOF 与 Video SR 重叠 | 代码仍在，VEYRA_TEST_OVERLAP_VIDEO_SR 默认关闭 | 未接受的历史候选，不是已清除或已验收优化 |
 | XeSS 真实源时间提示 | 代码仍在，VEYRA_TEST_XESS_SOURCE_TIMING 默认关闭 | 吞吐改善有重复证据，完整节奏、图像对应验收未完成，不能称修复完成 |
 | XeSS fence / deadline 只读诊断 | 保留，追踪按诊断开关启用 | 用于区分依赖等待与截止时间等待，不是调度优化 |
+| 全局取消 DLSS admission / 无限制接纳晚到生成 | 不作为产品方案；保留历史诊断证据 | 既有采集测试约204.10降至184.76次提交/秒、过期和输入丢失增加；文件测试也严重回退，见DLSS恢复及cadence报告 |
 
 核查 src/include/tests 未发现前六项临时环境变量入口。
 默认关闭不等于已删除；未验收候选不得悄悄默认开启或计入发布修复。
@@ -32,6 +33,9 @@
 - [本轮 XeSS 实验、候选与逐次证据](FG_STABILITY_PROGRESS_2026-09-21.md)
 - [执行方案及有限实验要求](FG_STABILITY_COMPLETION_PLAN_2026-09-21.md)
 - [当前链路复核](FG_PIPELINE_REASSESSMENT_2026-09-21.md)
+- [新的有界重构方案](FG_RUNTIME_REPAIR_PLAN_2026-09-21.md)
+- [取消 admission 的采集反证](DLSS_RECOVERY_REPAIR_2026-09-20.md)
+- [取消 admission 的文件反证与串行预算](FG_CADENCE_REPAIR_ACCEPTANCE_2026-09-20.md)
 - [工作记录](WORKLOG.md)
 
 开工存档 d2ae8ee；最新一组排队回退记录 53490a6。
