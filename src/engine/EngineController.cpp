@@ -281,9 +281,10 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
             HdrDisplayState displayHdrState;
             bool displayQueryFailed=false;
             auto displayHdrActive=[&]{
-                const auto queried=gfx::PresentSink::queryHdrDisplayActive(window);
-                const bool active=displayHdrState.update(queried);
-                if(!queried&&!displayQueryFailed)veyra::log::warn("display-color",std::format("HDR display query unavailable; retaining hdr={} without a graph rebuild",active));
+                HMONITOR target=nullptr;
+                const auto queried=gfx::PresentSink::queryHdrDisplayActive(window,&target);
+                const bool active=displayHdrState.update(reinterpret_cast<std::uintptr_t>(target),queried);
+                if(!queried&&!displayQueryFailed)veyra::log::warn("display-color",std::format("HDR display query unavailable; using target-local hdr={} (unknown target defaults to SDR)",active));
                 if(queried&&displayQueryFailed)veyra::log::info("display-color",std::format("HDR display query recovered hdr={}",active));
                 displayQueryFailed=!queried.has_value();
                 return active;

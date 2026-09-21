@@ -24,8 +24,9 @@ bool PresentSink::hdrDisplayActive(HWND window){
     return queryHdrDisplayActive(window).value_or(false);
 }
 
-std::optional<bool> PresentSink::queryHdrDisplayActive(HWND window){
+std::optional<bool> PresentSink::queryHdrDisplayActive(HWND window,HMONITOR* queriedMonitor){
     const auto monitor=MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST);
+    if(queriedMonitor)*queriedMonitor=monitor;
     if(!monitor)return std::nullopt;
     ComPtr<IDXGIFactory1> factory;
     auto hr=CreateDXGIFactory1(IID_PPV_ARGS(&factory));
