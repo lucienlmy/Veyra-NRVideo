@@ -25,6 +25,28 @@ def analyze(path):
                      key=lambda row: int(row["presentEndHost"]))
     output_gaps = [(int(current["presentEndHost"]) - int(previous["presentEndHost"])) / 10000
                    for previous, current in zip(outputs, outputs[1:])]
+    transitions = {}
+    deadlines = [row for row in events if row["event"] == "ProviderDeadline"]
+    first_schedule_parts = {name: [] for name in ("beforeDeadlineMs", "afterDeadlineMs", "deadlineLeadMs")}
+    for output in outputs:
+        begin = int(output.get("providerScheduleBeginHost", 0))
+        end = int(output["presentBeginHost"])
+        matches = [row for row in deadlines if begin <= int(row["host"]) <= end and int(row["detail"]) == 1]
+        if begin and len(matches) == 1:
+            row = matches[0]
+            first_schedule_parts["beforeDeadlineMs"].append((int(row["host"]) - begin) / 10000)
+            first_schedule_parts["afterDeadlineMs"].append((end - int(row["host"])) / 10000)
+            first_schedule_parts["deadlineLeadMs"].append(float(row["ms"]))
+    for previous, current in zip(outputs, outputs[1:]):
+        if not int(previous.get("providerCallerRva", 0)) or not int(current.get("providerCallerRva", 0)):
+            continue
+        key = f'{int(previous["providerCallerRva"]):x}->{int(current["providerCallerRva"]):x}'
+        group = transitions.setdefault(key, {name: [] for name in ("returnGapMs", "beforeHookMs", "hookPacingMs", "nativeCallMs")})
+        group["returnGapMs"].append((int(current["presentEndHost"]) - int(previous["presentEndHost"])) / 10000)
+        if int(current.get("providerScheduleBeginHost", 0)):
+            group["beforeHookMs"].append((int(current["providerScheduleBeginHost"]) - int(previous["presentEndHost"])) / 10000)
+            group["hookPacingMs"].append((int(current["presentBeginHost"]) - int(current["providerScheduleBeginHost"])) / 10000)
+        group["nativeCallMs"].append((int(current["presentEndHost"]) - int(current["presentBeginHost"])) / 10000)
     for event in events:
         if not event["event"].startswith("Xess"):
             continue
@@ -74,6 +96,9 @@ def analyze(path):
     return dict(scope="Retained bounded CPU trace only; Present wall time includes descheduling, not GPU execution or scanout.",
                 overwritten=int(header[3]) if header else None, cycles=len(rows), linkedCycles=len(linked),
                 sdkReturnIntervalMs=distribution(output_gaps),
+                firstScheduleParts={name: distribution(values) for name, values in first_schedule_parts.items()},
+                sdkCallerTransitions={key: {name: distribution(values) for name, values in group.items()}
+                                      for key, group in transitions.items()},
                 sdkReturnGapsOver10ms=sum(gap>10 for gap in output_gaps),
                 sdkReturnGapsUnder1ms=sum(gap<1 for gap in output_gaps),
                 missingOrAmbiguousLinks=len(rows)-len(linked),

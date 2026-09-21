@@ -46,6 +46,13 @@ The provider DLL on disk is never modified, re-signed or renamed; only the mappe
 
 XeSS pacing adaptation (2026-09-19): `include/veyra/gfx/XessPacing.h` and `src/gfx/XessPacing.cpp` also adapt the above pinned OptiScaler `XeFGPacing.h` NoteFrame/PaceFrame/WaitUntil logic: a bounded 15-period median, generated-frame deadlines, and the provider-owned tail limiter condition. Veyra retains its audited call-site hooks, adds synchronized statistics and complete hooked-present-return gap measurements, and does not port upstream timestamp hooks. Provider scheduling remains preferred; wall-clock pacing is used only when its scheduler is unavailable. No on-disk runtime changes.
 
+XeSS read-only timing diagnostics (2026-09-21): the timestamp callback ABI and
+pinned provider locations (0x3430 / 0x224B30) were cross-checked against
+SAOG0721/Magpie commit `3841698348bfb246623d4acf791984c8b68a577b`,
+`src/Magpie.Core/XeSSFGPacing.h` (GPL-3.0). Veyra's trace-only hook records
+the native deadline without modifying it. The upstream deadline rewrite is
+not ported. The audited DLL remains unchanged on disk.
+
 ### Magpie NR temporal residual route (2026-09-20)
 
 Veyra's optional `src/pipeline/NrTemporalPass.cpp` and

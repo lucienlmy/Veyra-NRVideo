@@ -29,6 +29,24 @@ def cycle(number, epoch, begin, instance=1, revision=1, app=True):
 
 
 class TimelineTests(unittest.TestCase):
+    def test_output_gap_components_and_legacy_unknown(self):
+        text = cycle(1, 1, 0)
+        text += "event=ProviderOutput presentBeginHost=9000 presentEndHost=10000 providerCallerRva=1 providerScheduleBeginHost=8000\n"
+        text += "event=ProviderOutput presentBeginHost=50000 presentEndHost=60000 providerCallerRva=2 providerScheduleBeginHost=30000\n"
+        text += "event=ProviderDeadline host=40000 detail=1 count=4 ms=0.9\n"
+        text += "event=ProviderOutput presentBeginHost=69000 presentEndHost=70000\n"
+        result = timeline.analyze(Trace(text))
+        group = result["sdkCallerTransitions"]["1->2"]
+        self.assertEqual(group["returnGapMs"]["mean"], 5)
+        self.assertEqual(group["beforeHookMs"]["mean"], 2)
+        self.assertEqual(group["hookPacingMs"]["mean"], 2)
+        self.assertEqual(group["nativeCallMs"]["mean"], 1)
+        self.assertEqual(len(result["sdkCallerTransitions"]), 1)
+        self.assertEqual(result["sdkReturnIntervalMs"]["samples"], 2)
+        self.assertEqual(result["firstScheduleParts"]["beforeDeadlineMs"]["mean"], 1)
+        self.assertEqual(result["firstScheduleParts"]["afterDeadlineMs"]["mean"], 1)
+        self.assertEqual(result["firstScheduleParts"]["deadlineLeadMs"]["mean"], 0.9)
+
     def test_epoch_boundary_included(self):
         result = timeline.analyze(Trace(cycle(1, 1, 0) + cycle(2, 1, 160000) + cycle(3, 2, 620000)))
         self.assertEqual(result["sourcePresentIntervalMs"]["mean"], 31)

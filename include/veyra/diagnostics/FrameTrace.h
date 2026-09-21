@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace veyra::diagnostics {
-enum class TraceKind { Submitted, Ready, Present, Gpu, Reset, Cancelled, FrameReady, Discarded, XessSleep, XessBind, XessPresent, ProviderOutput };
+enum class TraceKind { Submitted, Ready, Present, Gpu, Reset, Cancelled, FrameReady, Discarded, XessSleep, XessBind, XessPresent, ProviderOutput, ProviderDeadline };
 inline const char* traceKindName(TraceKind kind) {
     switch(kind){
     case TraceKind::Submitted:return "Submitted";
@@ -20,6 +20,7 @@ inline const char* traceKindName(TraceKind kind) {
     case TraceKind::XessBind:return "XessBind";
     case TraceKind::XessPresent:return "XessPresent";
     case TraceKind::ProviderOutput:return "ProviderOutput";
+    case TraceKind::ProviderDeadline:return "ProviderDeadline";
     }
     return "Unknown";
 }
@@ -42,6 +43,8 @@ struct FrameTraceEvent {
     // cycle is not a source ID; several queued sources can share it.
     uint64_t providerInstance=0;
     uint32_t providerCycle=0,preparationCycle=0;
+    uint32_t providerCallerRva=0;
+    int64_t providerScheduleBeginHost=0;
 };
 // Owned by the logger, independent of the deduplicated error history. No
 // allocation, formatting or disk I/O occurs when an event is recorded.

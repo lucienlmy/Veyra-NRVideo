@@ -5808,3 +5808,18 @@ Ran ui-fg-backends.py with staged EXE, native p001.mp4, output source-timing-swi
 exit0. TEMP/TMP scoped to E:/项目/Veyra/tmp/fg-stability-20260921.
 test-xess-timeline.py3 tests pass; git diff --check passes. No new runtime,
 delivery package, push or release. Goal remains active; P2-P6 not completed.
+
+Scheduler attribution follow-up: added caller RVA and hook-entry stamps, plus
+read-only ProviderDeadline trace behind VEYRA_TEST_TRACE_XESS. Native deadline
+unchanged; no new waiting or FG policy. Pinned upstream provenance recorded.
+Builds with existing build-isolated command exit0, logs/fg-stability-caller-trace-
+20260921.log and fg-stability-deadline-trace-20260921.log under E:/项目/Veyra.
+Sequential20s matrix runs caller-on native-nr-xess4/sr-nr-xess4 and deadline-on
+sr-nr-xess4 exit0, no smoke failure. Evidence tests/fg-stability-20260921.
+Read actual audited provider via pefile/capstone: index1 scheduler can wait
+for a fence before computing deadline. Split350 retained heavy first-index
+calls:8.375ms before deadline calculation,3.883ms after. Do not claim first
+segment is pure GPU time or remove the safety wait. Source52.24/s repeats.
+Next action changes from speculative timestamp port to fence/producer timing
+attribution. No cadence fix accepted. Analyzer4 tests pass; diff check passes.
+No package/runtime change, push or publication; goal remains active.

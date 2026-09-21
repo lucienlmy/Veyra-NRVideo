@@ -20,6 +20,9 @@ using PresentFn = int64_t (*)(void*, uint32_t, uint32_t, uint64_t, void*, void*,
 // The provider's own frame scheduler and its ring snapshot helper.
 using SchedFn = bool (*)(void*, void*, uint8_t, void*, uint32_t);
 using RingSnapshotFn = void* (*)(void*, void*);
+using TimestampFn = void* (*)(void*, int64_t*, void*, void*, uint32_t, uint32_t);
+// Same pinned provider locations documented by Magpie 3841698348bfb246.
+constexpr uint32_t timestampThunkRva=0x3430,timestampFnRva=0x224B30;
 
 struct OutputIntervals {
     // Quarter-millisecond bins, with a separate overflow bin at 250ms.
@@ -48,6 +51,8 @@ struct PacingState {
     std::mutex mutex;
     std::mutex statsMutex;
     ThunkHook hook;
+    ThunkHook timestampHook;
+    TimestampFn timestampNative=nullptr;
     bool installed = false;
     const bool traceEnabled=GetEnvironmentVariableW(L"VEYRA_TEST_TRACE_XESS",nullptr,0)>0;
     uint8_t* base = nullptr;
@@ -104,6 +109,23 @@ std::string narrow(const std::wstring& value) {
     std::string text(size_t(length), '\0');
     WideCharToMultiByte(CP_UTF8, 0, value.c_str(), int(value.size()), text.data(), length, nullptr, nullptr);
     return text;
+}
+
+void* traceDeadline(void* ctx,int64_t* out,void* lookup,void* timing,uint32_t index,uint32_t count) {
+    auto& s=state();
+    void* result=s.timestampNative(ctx,out,lookup,timing,index,count);
+    LARGE_INTEGER now{};QueryPerformanceCounter(&now);
+    diagnostics::FrameTraceEvent event;event.kind=diagnostics::TraceKind::ProviderDeadline;
+    event.host100ns=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()/100;
+    event.detail=index;event.count=count;
+    // Audited native scheduler uses QPC converted to nanoseconds, not host100ns.
+    const auto frequency=s.frequency.QuadPart;
+    if(out&&frequency>0){
+        const auto ns=(now.QuadPart/frequency)*1000000000LL+(now.QuadPart%frequency)*1000000000LL/frequency;
+        event.milliseconds=double(*out-ns)/1000000.0;
+    }
+    Logger::instance().recordFrame(event);
+    return result;
 }
 
 // The provider's scheduler is only live when its limiter is off; calling it
@@ -238,19 +260,23 @@ void tryPace(void* ctx, void* arg5, void* arg6, uint64_t arg7, bool isLast) {
 
 int64_t detour(void* ctx, uint32_t a2, uint32_t a3, uint64_t a4, void* arg5, void* arg6, uint64_t arg7) {
     auto& s = state();
+    const auto host=[](){return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()/100;};
+    const auto scheduleBegin=s.traceEnabled?host():0;
+    auto* caller = static_cast<uint8_t*>(_ReturnAddress());
     if (s.installed) {
-        auto* caller = static_cast<uint8_t*>(_ReturnAddress());
         if (caller == s.base + XessPacing::kPacedCallerRva) tryPace(ctx, arg5, arg6, arg7, false);
         else if (caller == s.base + XessPacing::kLastFrameCallerRva) tryPace(ctx, arg5, arg6, arg7, true);
         else {std::lock_guard statsLock(s.statsMutex);++s.forwarded;}
     }
-    const auto host=[](){return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()/100;};
     const auto nativeBegin=s.traceEnabled?host():0;
     const auto result=s.native(ctx, a2, a3, a4, arg5, arg6, arg7);
     if(s.traceEnabled){
         diagnostics::FrameTraceEvent event;event.kind=diagnostics::TraceKind::ProviderOutput;
         event.host100ns=event.presentEndHost=host();event.presentBeginHost=nativeBegin;
         event.milliseconds=double(event.presentEndHost-nativeBegin)/10000;
+        event.providerScheduleBeginHost=scheduleBegin;
+        const auto address=reinterpret_cast<uintptr_t>(caller),base=reinterpret_cast<uintptr_t>(s.base);
+        if(address>=base&&address-base<XessPacing::kKnownSizeOfImage)event.providerCallerRva=uint32_t(address-base);
         Logger::instance().recordFrame(event);
     }
     LARGE_INTEGER now{};QueryPerformanceCounter(&now);
@@ -352,6 +378,11 @@ XessPacing::State XessPacing::install(HMODULE provider, uint32_t generatedFrames
     }
     s.native = reinterpret_cast<PresentFn>(status.trampoline != nullptr ? status.trampoline : base + kNativePresentRva);
     s.installed = true;
+    if(s.traceEnabled&&thunkTargets(base,timestampThunkRva,timestampFnRva)){
+        s.timestampNative=reinterpret_cast<TimestampFn>(base+timestampFnRva);
+        const auto traceStatus=s.timestampHook.install(base+timestampThunkRva,reinterpret_cast<void*>(&traceDeadline),11);
+        log::info("xess-pacing",std::format("read-only deadline trace installed={}",traceStatus.installed));
+    }
     // Arm the periodic stats window only once frame times are being measured.
     LARGE_INTEGER now{};
     QueryPerformanceCounter(&now);
@@ -370,6 +401,8 @@ void XessPacing::release() {
     if (!s.installed) return;
     s.installed = false;
     (void)s.hook.remove();
+    (void)s.timestampHook.remove();
+    s.timestampNative=nullptr;
     s.native = nullptr;
     s.sched = nullptr;
     s.ringSnapshot = nullptr;
