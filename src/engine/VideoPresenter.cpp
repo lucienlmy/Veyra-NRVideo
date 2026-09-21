@@ -114,7 +114,7 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
     if(auto* xess=sink_.xess()){
         uint32_t preparedId=0;
         for(auto& work:xessWork_)if(work.id&&work.identity==identity){preparedId=work.id;work.id=0;break;}
-        if(!xess->beginFrame(preparedId)){xessFailed_=true;return false;}
+        if(!xess->beginFrame(preparedId,identity)){xessFailed_=true;return false;}
     }
     const auto beginEnd=std::chrono::steady_clock::now();
     if(presentationQueue_){

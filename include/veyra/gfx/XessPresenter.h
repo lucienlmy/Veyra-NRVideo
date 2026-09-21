@@ -3,6 +3,7 @@
 #include <dxgi1_6.h>
 #include <cstdint>
 #include <memory>
+#include "veyra/pipeline/FrameBatch.h"
 
 namespace veyra::gfx {
 class XessPresenter {
@@ -15,7 +16,7 @@ public:
     uint32_t beginInput();
     bool beginProcessing(uint32_t frameId);
     bool endProcessing(uint32_t frameId);
-    bool beginFrame(uint32_t preparedFrameId=0);
+    bool beginFrame(uint32_t preparedFrameId=0,pipeline::FrameIdentity identity={});
     bool tag(ID3D12GraphicsCommandList*,ID3D12Resource* color,ID3D12Resource* motion,ID3D12Resource* depth,
              RECT region,bool enabled,bool reset,float elapsedMs);
     bool beforePresent();

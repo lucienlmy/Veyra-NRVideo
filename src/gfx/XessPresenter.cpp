@@ -4,12 +4,15 @@
 #include "veyra/RuntimePaths.h"
 #include "veyra/gfx/XessMfgUnlock.h"
 #include "veyra/gfx/XessPacing.h"
+#include <atomic>
 #ifdef VEYRA_HAS_XESS
 #include <xess_fg/xefg_swapchain_d3d12.h>
 #include <xell/xell_d3d12.h>
 #endif
 
 namespace {
+std::atomic<uint64_t> nextTraceInstance{0};
+int64_t traceHost(){return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()/100;}
 // Local wide->narrow for log lines (the presenter's detail strings are wide).
 std::string narrowDetail(const std::wstring& value){
     if(value.empty())return {};
@@ -23,6 +26,11 @@ std::string narrowDetail(const std::wstring& value){
 
 namespace veyra::gfx {
 struct XessPresenter::Impl {
+    const bool traceEnabled=GetEnvironmentVariableW(L"VEYRA_TEST_TRACE_XESS",nullptr,0)>0;
+    const uint64_t traceInstance=++nextTraceInstance;
+    pipeline::FrameIdentity traceIdentity{};
+    uint32_t preparationCycle=0;
+    int64_t presentBegin=0;
     uint64_t generated=0,presented=0;
     uint32_t requestedGenerated=0;   // generated frames requested by the user (0 = 2X stock)
     uint32_t maxInterpolations=1;    // runtime-reported ceiling after the unlock
@@ -31,6 +39,17 @@ struct XessPresenter::Impl {
     xefg_swapchain_handle_t fg=nullptr;
     xell_context_handle_t ll=nullptr;
     uint32_t id=0,nextId=0;
+    void record(diagnostics::TraceKind kind,uint32_t cycle,int64_t begin,int64_t end,uint32_t count=0){
+        if(!traceEnabled)return;
+        diagnostics::FrameTraceEvent event;
+        event.kind=kind;event.host100ns=end;
+        if(kind!=diagnostics::TraceKind::XessSleep)event.identity=traceIdentity;
+        event.providerInstance=traceInstance;event.providerCycle=cycle;
+        event.preparationCycle=kind==diagnostics::TraceKind::XessSleep?0:preparationCycle;
+        event.presentBeginHost=begin;event.presentEndHost=end;
+        event.milliseconds=double(end-begin)/10000;event.count=count;
+        Logger::instance().recordFrame(event);
+    }
     bool cycleOpen=false,renderSubmitStarted=false,renderSubmitEnded=false;
 #define XESS_PROC(name) decltype(&name) name##Fn=nullptr
     XESS_PROC(xefgSwapChainD3D12CreateContext);
@@ -187,7 +206,9 @@ uint32_t XessPresenter::beginInput(){
     if(p.cycleOpen)return p.nextId;
     const auto frameId=++p.nextId;
     diagnostics::CpuStallTrace trace("xess-begin-stall",frameId);
+    const auto sleepBegin=p.traceEnabled?traceHost():0;
     const bool slept=p.check(p.xellSleepFn(p.ll,frameId),"XeLL sleep");trace.mark("sleep");
+    if(p.traceEnabled)p.record(diagnostics::TraceKind::XessSleep,frameId,sleepBegin,traceHost(),slept?1:0);
     p.cycleOpen=slept&&p.marker(XELL_SIMULATION_START,frameId);
     p.renderSubmitStarted=p.renderSubmitEnded=false;
     return p.cycleOpen?frameId:0;
@@ -217,15 +238,17 @@ bool XessPresenter::endProcessing(uint32_t frameId){
     (void)frameId;return false;
 #endif
 }
-bool XessPresenter::beginFrame(uint32_t preparedFrameId){
+bool XessPresenter::beginFrame(uint32_t preparedFrameId,pipeline::FrameIdentity identity){
 #ifdef VEYRA_HAS_XESS
     auto& p=*p_;
     p.id=beginInput();
+    p.traceIdentity=identity;p.preparationCycle=preparedFrameId;
+    if(p.traceEnabled){const auto now=traceHost();p.record(diagnostics::TraceKind::XessBind,p.id,now,now);}
     if(log::verboseFrameLogs()&&preparedFrameId!=p.id)
         log::info("xess-fg",std::format("presentation cycle id={} preparationCycle={}; cycle timing is not source-frame latency",p.id,preparedFrameId));
     return p.id&&beginProcessing(p.id);
 #else
-    (void)preparedFrameId;
+    (void)preparedFrameId;(void)identity;
     return false;
 #endif
 }
@@ -257,14 +280,17 @@ bool XessPresenter::tag(ID3D12GraphicsCommandList* list,ID3D12Resource* color,ID
 }
 bool XessPresenter::beforePresent(){
 #ifdef VEYRA_HAS_XESS
-    auto& p=*p_;return endProcessing(p.id)&&p.check(p.xefgSwapChainSetPresentIdFn(p.fg,p.id),"SetPresentId")&&p.marker(XELL_PRESENT_START);
+    auto& p=*p_;const bool ok=endProcessing(p.id)&&p.check(p.xefgSwapChainSetPresentIdFn(p.fg,p.id),"SetPresentId")&&p.marker(XELL_PRESENT_START);
+    p.presentBegin=ok&&p.traceEnabled?traceHost():0;return ok;
 #else
     return false;
 #endif
 }
 bool XessPresenter::afterPresent(){
 #ifdef VEYRA_HAS_XESS
-    auto& p=*p_;if(!p.marker(XELL_PRESENT_END))return false;
+    auto& p=*p_;const auto presentEnd=p.traceEnabled?traceHost():0;
+    if(p.traceEnabled&&p.presentBegin)p.record(diagnostics::TraceKind::XessPresent,p.id,p.presentBegin,presentEnd);
+    if(!p.marker(XELL_PRESENT_END))return false;
     p.cycleOpen=false;
     xefg_swapchain_present_status_t status{};
     if(!p.check(p.xefgSwapChainGetLastPresentStatusFn(p.fg,&status),"PresentStatus"))return false;

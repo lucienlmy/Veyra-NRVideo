@@ -5727,3 +5727,47 @@ XeSS时间/帧对应、DLSS整组空档、输出限帧、UI/字幕/采集回归�
 默认限帧和XeSS时间提示结论。保留所有既有未提交代码及实验，不启动新目标、
 测试、构建或发布。本轮无新增二进制/临时产物。文档检查使用git diff --check
 及新方案的本地Markdown链接存在性校验；不将文档检查算产品验收。
+
+## 2026-09-21 FG stability: source-linked XeSS diagnostics
+
+Execution authorized after the preceding planning entry. Baseline checkpoint:
+`d2ae8ee` / `checkpoint/pre-fg-stability-20260921`; isolated branch
+`codex/fg-stability-20260921`, worktree `worktrees/playback-nr-20260920`.
+Added opt-in VEYRA_TEST_TRACE_XESS bounded Sleep/Bind/Present events,
+provider-instance/cycle IDs, and actual source identity linkage. No scheduling,
+quality, multiplier or waiting policy changes. A preparation cycle may be
+shared by multiple queued sources; mismatched preparation/presentation cycle
+numbers alone are not evidence of a bug.
+
+Build succeeded with scripts/build-isolated.ps1, targets veyra, version
+1.4.4beta, BuildDirectory E:/项目/Veyra/build/playback-nr-20260920,
+DependencyCache E:/项目/Veyra/build/frame-pacing-20260918/CMakeCache.txt,
+TempDirectory E:/项目/Veyra/tmp/fg-stability-20260921. Output was captured in
+the tool session (72 steps), not a separate build log. Existing FFmpeg
+conversion warnings remain.
+
+Ran scripts/acceptance/fg-utilization-matrix.py with --cases native-nr-xess4
+sr-nr-xess4 --seconds 20 and VEYRA_TEST_TRACE_XESS=1. EXE staging:
+E:/项目/Veyra/tests/fg-stability-20260921/app/veyra.exe; existing runtime
+files linked without replacement. Native input p001.mp4; derived input
+tests/nr-fg-followup-20260921/p001-derived1080.mp4. Both exited 0,
+failed=false. Evidence: tests/fg-stability-20260921/timeline-a/<case>/
+{stdout.log,app.log,trace.txt,result.json,telemetry.json,xess-timeline.json}.
+All relative artifact paths in this entry are under E:/项目/Veyra/.
+
+Native NR XeSS4: ~60 source submissions/s; retained source interval P99
+17.358ms, maximum40.019ms, provider Present cycle wall P95 10.436ms.
+True1080p-to4K VideoSR quality3 + NR XeSS4: ~39.98 source submissions/s;
+retained interval mean24.982ms, P99 46.754ms, max47.097ms. Of594 retained
+intervals,149 cross epoch boundaries (mean45.736ms). Present cycle wall P95
+27.941ms; XeLL Sleep P95 12.256ms. NVML device-wide GPU averages87.51%
+and69.13% respectively are not per-stage utilization or proof of headroom.
+
+Corrected the first analyzer draft, which omitted epoch boundaries and
+misleadingly reported heavy source interval mean18.033ms. Whole retained
+stream and same-epoch distributions are now separate. Trace rings overwrote
+4698/1469 records respectively; these statistics are retained tails, not full
+run or physical display measurements. Present cycle wall includes the return
+path before afterPresent, not pure GPU or exact DXGI duration. Next: distinguish
+provider scheduler waits from resource waits before selecting a candidate.
+No performance improvement accepted, publication or goal completion claimed.

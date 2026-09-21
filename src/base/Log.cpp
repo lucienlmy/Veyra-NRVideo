@@ -179,7 +179,8 @@ std::string Logger::diagnosticReport(){std::ostringstream o;o<<"Veyra 本地诊�
         <<" decodedHost="<<e.decodedHost<<" processHost="<<e.processHost<<" readyHost="<<e.readyHost
         <<" presentBeginHost="<<e.presentBeginHost<<" presentEndHost="<<e.presentEndHost
         <<" entryDeviationMs="<<e.entryDeviationMs<<" returnDeviationMs="<<e.returnDeviationMs
-        <<" queueDepth="<<e.queueDepth<<" mediaDeviationValid="<<e.mediaDeviationValid<<'\n';
+        <<" queueDepth="<<e.queueDepth<<" mediaDeviationValid="<<e.mediaDeviationValid
+        <<" providerInstance="<<e.providerInstance<<" providerCycle="<<e.providerCycle<<" preparationCycle="<<e.preparationCycle<<'\n';
     return diagnostics::redact(o.str());
 }
 void Logger::flush()
