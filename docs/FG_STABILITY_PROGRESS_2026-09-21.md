@@ -91,10 +91,55 @@ Three synthetic analyzer tests pass (epoch boundaries, rebuild/revision,
 missing/ambiguous joins); git diff --check passes. Initial analyzer omitted
 epoch-boundary gaps: corrected before drawing conclusions or saving results.
 
+## Whole-run and lifecycle follow-up
+
+Added opt-in cumulative SDK-return histograms to XessPacing.cpp, bounded to
+1001 quarter-millisecond bins per phase. First5s from first hooked return and
+the remainder are separate. Percentiles are bin upper bounds (overflow uses
+observed maximum). Totals include boundary gaps and are emitted on hook
+release after provider context destruction, not per frame. They measure hook
+lifetime, not application launch or scanout; 2X has no pacing hook coverage.
+
+Same executable SHA256
+6eafd66777b4ce307ccfc14abe70324a694b67f98e66f77327988d0f0419ad74:
+heavy SR+NR+XeSS4, sequential120s on,30s off,30s on. Steady statistics:
+
+| Metric | Off30s | On30s | On120s |
+| --- | ---: | ---: | ---: |
+| SDK interval samples | 2928 | 4198 | 20841 |
+| Mean interval ms | 7.701 | 5.383 | 5.402 |
+| P50 upper ms | 8.500 | 4.250 | 4.250 |
+| P95 upper ms | 23.000 | 12.500 | 12.500 |
+| P99 upper ms | 23.250 | 18.750 | 18.750 |
+| Maximum ms | 41.124 | 43.733 | 45.954 |
+| Intervals under1ms | 668 | 997 | 4940 |
+| Intervals over10ms | 676 | 1008 | 4994 |
+| Retained source presents/s | 40.03 | 52.23 | 52.09 |
+| Process age-to-return P95 ms | 56.312 | 38.752 | 38.990 |
+
+All exit0/failed=false. Sustained throughput improvement repeats, but burst
+fraction and maximum gaps do not improve. Unequal run lengths make maxima
+and raw event counts unsuitable as comparative rates. The matched30s pair
+also has isolated >40ms gaps. This candidate is NOT uniform-cadence accepted.
+Earlier retained-tail maxima understated whole-run spikes. Default stays off.
+
+Evidence roots: tests/fg-stability-20260921/whole-{on120,off30,on30}.
+Build log: logs/fg-stability-whole-output-20260921.log; build exit0.
+Harness and fixed media/configuration are the same as above, with respective
+--seconds120/30/30 and source timing enabled only for on runs.
+
+ui-fg-backends.py EXE p001.mp4 OUTPUT --portable with timing candidate enabled
+passes12 selector transactions: XeSS/DLSS round trips, XeSS2X/4X rebuilds,
+DLSS6X to XeSS supported4X, and off. Three layout sizes checked. Evidence:
+tests/fg-stability-20260921/source-timing-switch/result.json and app.log.
+This script disables NR/SR and is a lifecycle check, not heavy-load visual,
+seek or continuous-resize acceptance. Analyzer3 synthetic tests still pass.
+
 ## Next acceptance and remaining phases
 
-Full-run interval aggregation, sustained run, dynamic
-seek/switch/resize and visual correspondence still required before enabling by
+Full-run interval aggregation, sustained run and selector switches now have
+evidence above. Dynamic seek/continuous-resize and visual correspondence
+remain required before enabling by
 default. Do not call it an accepted complete repair. Investigate persistent
 short/long burst boundaries independently; no extra queue or fixed wait.
 P2 DLSS long gaps and P3-P6 remain as listed in the execution plan; this work

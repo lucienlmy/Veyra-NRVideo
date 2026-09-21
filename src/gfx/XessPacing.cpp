@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <intrin.h>
@@ -19,6 +20,29 @@ using PresentFn = int64_t (*)(void*, uint32_t, uint32_t, uint64_t, void*, void*,
 // The provider's own frame scheduler and its ring snapshot helper.
 using SchedFn = bool (*)(void*, void*, uint8_t, void*, uint32_t);
 using RingSnapshotFn = void* (*)(void*, void*);
+
+struct OutputIntervals {
+    // Quarter-millisecond bins, with a separate overflow bin at 250ms.
+    std::array<uint64_t,1001> bins{};
+    uint64_t samples=0, under1=0, over10=0;
+    double sumMs=0, maximumMs=0;
+    void add(double ms) {
+        if(ms<0)return;
+        ++samples;sumMs+=ms;maximumMs=(std::max)(maximumMs,ms);
+        under1+=ms<1;over10+=ms>10;
+        ++bins[static_cast<size_t>((std::min)(ms*4,1000.0))];
+    }
+    double percentileUpper(double fraction) const {
+        if(!samples)return 0;
+        const auto rank=static_cast<uint64_t>(std::ceil(double(samples)*fraction));
+        uint64_t cumulative=0;
+        for(size_t i=0;i<bins.size();++i){
+            cumulative+=bins[i];
+            if(cumulative>=rank)return i==1000?maximumMs:double(i+1)*0.25;
+        }
+        return maximumMs;
+    }
+};
 
 struct PacingState {
     std::mutex mutex;
@@ -48,6 +72,8 @@ struct PacingState {
     int32_t logBudget = 6;
     int64_t lastPresentQpc = 0, presentGapSum = 0, presentGapMax = 0;
     uint64_t presentGapSamples = 0;
+    int64_t firstOutputQpc=0;
+    OutputIntervals startupOutputs,steadyOutputs;
     std::array<int64_t,15> periods{};
     size_t periodCount=0,periodPosition=0;
     int64_t lastBurstQpc=0,periodQpc=0,intervalQpc=0,targetQpc=0;
@@ -61,6 +87,14 @@ PacingState& state() {
 
 double msFromQpc(const PacingState& s, int64_t qpc) {
     return s.frequency.QuadPart > 0 ? (double(qpc) * 1000.0) / double(s.frequency.QuadPart) : 0.0;
+}
+
+void logOutputIntervals(const char* phase,const OutputIntervals& stats) {
+    log::info("xess-output-total",std::format(
+        "phase={} samples={} meanMs={:.3f} p50UpperMs={:.3f} p95UpperMs={:.3f} p99UpperMs={:.3f} maxMs={:.3f} under1={} over10={} (cumulative per hook lifetime; 0.25ms bins; SDK returns, not scanout)",
+        phase,stats.samples,stats.samples?stats.sumMs/double(stats.samples):0,
+        stats.percentileUpper(0.50),stats.percentileUpper(0.95),stats.percentileUpper(0.99),
+        stats.maximumMs,stats.under1,stats.over10));
 }
 
 std::string narrow(const std::wstring& value) {
@@ -223,12 +257,17 @@ int64_t detour(void* ctx, uint32_t a2, uint32_t a3, uint64_t a4, void* arg5, voi
     std::lock_guard statsLock(s.statsMutex);
     if(s.lastPresentQpc!=0){
         const auto gap=now.QuadPart-s.lastPresentQpc;
+        if(s.traceEnabled){
+            auto& totals=now.QuadPart-s.firstOutputQpc<s.frequency.QuadPart*5?s.startupOutputs:s.steadyOutputs;
+            totals.add(msFromQpc(s,gap));
+        }
         s.presentGapSum+=gap;s.presentGapMax=(std::max)(s.presentGapMax,gap);
         if(++s.presentGapSamples==240){
             log::info("xess-present-gaps",std::format("samples={} meanMs={:.3f} maxMs={:.3f} (all hooked present returns, includes burst boundaries; not scanout)",s.presentGapSamples,msFromQpc(s,s.presentGapSum/int64_t(s.presentGapSamples)),msFromQpc(s,s.presentGapMax)));
             s.presentGapSamples=0;s.presentGapSum=s.presentGapMax=0;
         }
     }
+    if(!s.firstOutputQpc)s.firstOutputQpc=now.QuadPart;
     s.lastPresentQpc=now.QuadPart;
     return result;
 }
@@ -296,6 +335,7 @@ XessPacing::State XessPacing::install(HMODULE provider, uint32_t generatedFrames
     s.scheduled = s.refused = s.forwarded = s.bypassed = 0;
     s.lastScheduledQpc = 0;
     s.lastPresentQpc=s.presentGapSum=s.presentGapMax=0;s.presentGapSamples=0;
+    s.firstOutputQpc=0;s.startupOutputs={};s.steadyOutputs={};
     s.periods={};s.periodCount=s.periodPosition=0;
     s.lastBurstQpc=s.periodQpc=s.intervalQpc=s.targetQpc=0;s.fallbackFrames=0;
     s.gapSum = s.gapSamples = 0;
@@ -333,6 +373,11 @@ void XessPacing::release() {
     s.native = nullptr;
     s.sched = nullptr;
     s.ringSnapshot = nullptr;
+    if(s.traceEnabled){
+        std::lock_guard statsLock(s.statsMutex);
+        logOutputIntervals("startup-first5s",s.startupOutputs);
+        logOutputIntervals("steady-after5s",s.steadyOutputs);
+    }
     log::info("xess-pacing", std::format("removed (scheduled={} refused={} bypassed={} forwarded={} fallbackFrames={})",
                                          s.scheduled, s.refused, s.bypassed, s.forwarded,s.fallbackFrames));
 }

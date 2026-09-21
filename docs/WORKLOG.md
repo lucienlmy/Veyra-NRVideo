@@ -5789,3 +5789,22 @@ Analyzer's3 synthetic tests pass; diff check passes. One combined shell
 off/on loop was policy-rejected before execution; split into independent
 invocations without the unnecessary environment removal and both completed.
 No new runtime, published package replacement, push or goal completion.
+
+Follow-up whole-run diagnostics: XessPacing.cpp adds trace-only fixed-size
+SDK-return histograms, startup5s and steady phases, release-time summaries.
+Existing context destruction precedes hook release; no new wait or scheduling
+policy. Build command unchanged (build-isolated.ps1, target veyra); exit0,
+log E:/项目/Veyra/logs/fg-stability-whole-output-20260921.log.
+Copied build-root veyra.exe to existing isolated app staging. Matrix harness
+ran sr-nr-xess4 for120s candidate,30s control,30s candidate, sequentially with
+watchdogs. Evidence E:/项目/Veyra/tests/fg-stability-20260921/whole-on120,
+whole-off30,whole-on30. Full steady mean7.701->5.383ms and P99 upper
+23.25->18.75ms; sustained candidate mean5.402ms. Maxima41.124/43.733/45.954ms
+and short-gap fraction remain poor. Source40.03->52.23/s, sustained52.09/s.
+No uniform4X acceptance or default enablement. No loss of quality established
+or claimed: synchronized visual verification remains outstanding.
+Ran ui-fg-backends.py with staged EXE, native p001.mp4, output source-timing-switch,
+--portable and candidate enabled;12 switch transactions and layout checks pass,
+exit0. TEMP/TMP scoped to E:/项目/Veyra/tmp/fg-stability-20260921.
+test-xess-timeline.py3 tests pass; git diff --check passes. No new runtime,
+delivery package, push or release. Goal remains active; P2-P6 not completed.
