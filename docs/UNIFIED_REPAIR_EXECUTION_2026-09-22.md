@@ -527,6 +527,63 @@ DXGI `GetFrameStatistics`，逐秒增量取均值；`pres/s` 与 `sd`/`min`/`max
 
 交付构建 SHA256 前 16 位 `1EB4288CBF1CF701`。
 
+## 3j. 重大更正：display-stats 指标是错的，§3h / §3i 的送显结论全部撤回
+
+### 错在哪
+
+`PresentSink::sampleFrameStatistics` 把 `delta.displayed` 取成了
+`DXGI_FRAME_STATISTICS::PresentRefreshCount` 的增量。该字段是"最后一次显示的提交落在
+第几次刷新"，是一个**刷新序号**，它每秒的增量恒等于刷新率，与显示了多少帧无关。
+于是派生出的 `notDisplayed = presents - displayed` 与
+`refreshesWithoutNewFrame = refreshes - displayed` 在结构上必然接近 0。
+
+破绽其实一直在数据里：不开补帧时 `presents=60.7` 而 `displayed=101.18`，
+显示比提交还多，物理上不可能。此前在 XeSS 两行看到同样现象时被错误解释为
+"提供方自己送显"，该解释不成立。
+
+### 改用 PresentCount 也不对
+
+先把 `displayed` 改成 `DXGI_FRAME_STATISTICS::PresentCount`，实测（`b15/`）：
+
+```
+refreshHz=100.000 presents=273 displayed=273 refreshes=100 displayedRefreshDelta=100
+```
+
+`PresentCount` 的增量等于我们自己的 Present 调用数（273），两个 refresh 计数器都等于
+刷新率（100）。**在"关闭垂直同步 + 允许撕裂 + 翻转丢弃"的交换链上，
+`GetFrameStatistics` 的任何字段或组合都给不出"面板实际显示了多少帧"**——
+撕裂状态下一次刷新可能显示多帧的拼接，"显示帧数"本身不是良定义的量。
+
+### 最终处理
+
+日志改为只报原始计数并写明其局限，删除两个派生的伪指标：
+
+```
+display-stats] refreshHz presentCalls dxgiPresentCount refreshes presentRefreshDelta backend
+(这些计数器无法反映面板实际显示了多少帧；测量扫描输出需要 PresentMon)
+```
+
+`scripts/acceptance/fg-independent-ab.py` 同步兼容新旧字段名。
+
+### 撤回的结论
+
+- **§3h 全部撤回**：其核心论据"两种配置 `displayed` 相同、`refreshesWithoutNewFrame`
+  全为 0"来自错误指标，不成立。因此"Reduced 在送显口径上等同或更好"**没有证据支持**。
+- **§3i 的"实际显示/s"与"缺帧刷新/s"两列作废**，该表其余列（提交/s、逐秒 sd、
+  最低秒、提交间隔、Present 阻塞）来自自有 trace，仍然有效。
+- **§3e / §3g 基于提交帧数的判定重新成为唯一有数据支持的口径**，但它们本身也只
+  衡量软件提交侧，不等于观感。
+
+即：**Reduced 路径到底是赚是亏，目前没有可信结论**。默认值维持开启（现状），
+不因为一个已被推翻的论据去改它；要定论必须先有 PresentMon 或等价的扫描输出测量。
+
+### 教训
+
+本轮第三次判据错误：先是跨时段比较（§3c.1 推翻 §3），再是用提交帧数当观感
+（§3h 推翻 §3e/§3g），现在是指标定义本身错误（本节推翻 §3h）。
+**新增一条硬规矩：任何新指标在用于判断之前，必须先做一次"物理不可能"检查**——
+本例中"显示帧数 > 提交帧数"和"100 Hz 面板显示 270 帧/s"都应当在第一次出现时就拦下。
+
 ## 4. 未做项的原因与下一步
 
 - **C3/C4/延迟 3b（采集三缓冲、锁外复制、直写 upload 堆）**：需要重构 mailbox 所有权

@@ -447,11 +447,18 @@ PresentSink::FrameStatisticsDelta PresentSink::sampleFrameStatistics(){
     if(frameStatisticsBaseValid_){
         delta.supported=true;
         delta.presents=presentCount_-frameStatisticsBasePresents_;
-        delta.displayed=uint64_t(stats.PresentRefreshCount-frameStatisticsBasePresentRefresh_);
+        // PresentCount is the one that counts frames the display actually
+        // showed. PresentRefreshCount is a vblank index: its delta is just the
+        // refresh count, so using it as "displayed" made every configuration
+        // look like it displayed exactly refreshHz frames and made
+        // refreshes-displayed structurally zero (bug found 2026-09-22).
+        delta.displayed=uint64_t(stats.PresentCount-frameStatisticsBaseDisplayed_);
+        delta.displayedRefresh=uint64_t(stats.PresentRefreshCount-frameStatisticsBasePresentRefresh_);
         delta.refreshes=uint64_t(stats.SyncRefreshCount-frameStatisticsBaseSyncRefresh_);
     }
     frameStatisticsBaseValid_=true;
     frameStatisticsBasePresents_=presentCount_;
+    frameStatisticsBaseDisplayed_=stats.PresentCount;
     frameStatisticsBasePresentRefresh_=stats.PresentRefreshCount;
     frameStatisticsBaseSyncRefresh_=stats.SyncRefreshCount;
     return delta;

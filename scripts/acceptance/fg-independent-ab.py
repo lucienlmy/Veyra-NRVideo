@@ -110,7 +110,12 @@ def summarise(case_dir: Path, seconds: int):
         out["displayStatsSamples"] = len(stats)
         out["displayed"] = dist([float(s["displayed"]) for s in stats])
         out["presents"] = dist([float(s["presents"]) for s in stats])
-        out["notDisplayed"] = dist([float(s["notDisplayed"]) for s in stats])
+        # "discarded" replaced the old "notDisplayed" when displayed was fixed
+        # to use DXGI PresentCount (2026-09-22); accept either spelling.
+        key = "discarded" if "discarded" in stats[0] else "notDisplayed"
+        out["discarded"] = dist([float(s[key]) for s in stats])
+        if "refreshes" in stats[0]:
+            out["refreshes"] = dist([float(s["refreshes"]) for s in stats])
         out["refreshesWithoutNewFrame"] = dist([float(s["refreshesWithoutNewFrame"]) for s in stats])
     else:
         unavailable = next((l for l in lines if "[display-stats] unavailable" in l), None)

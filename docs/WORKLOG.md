@@ -1,5 +1,25 @@
 # Veyra 工作记录
 
+## 2026-09-22 display-stats 指标错误，送显口径结论全部撤回；帧同步实测无效
+
+**指标 bug**：`sampleFrameStatistics` 把 `displayed` 取成 `PresentRefreshCount` 增量
+（刷新序号，每秒增量恒等于刷新率），导致 `notDisplayed` 与 `refreshesWithoutNewFrame`
+结构上恒为 0。破绽是"不开补帧时 displayed 101 > presents 60"，物理不可能。
+改用 `PresentCount` 同样不对（实测 `presents=273 displayed=273 refreshes=100`）：
+**撕裂 + 翻转丢弃下 DXGI 给不出面板实际显示帧数**。日志改为只报原始计数并写明局限，
+删除两个派生伪指标。**据此撤回 §3h 全部结论与 §3i 的两列**，Reduced 是赚是亏
+目前无可信结论，默认维持开启不动。详见 [执行记录 §3j](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+
+**帧同步实测无效**（用户反馈属实）：新增冒烟开关 `--smoke-pacing off|lowqueue|even|reflex`，
+同时段交替各 2 轮。四个模式在吞吐、逐秒 sd、媒体时钟偏差上无可测差异，逐秒 sd 开启后
+略差（DLSS 4X 关 3.3–3.55，开 3.44–4.79）。设置确实生效（`effective=true/2/0`，
+开补帧时按设计退回低排队）。原因：XeSS/FSR 下帧同步被整体禁用、Reflex 遇补帧退回低排队、
+低排队仅把 DXGI 队列深度 3 改 1。**保留**：队列深度对"提交到上屏"的排队延迟有影响，
+但该延迟需 PresentMon 才能测，未下"完全无用"的结论。数据 `b13/pacing-ab/`。
+
+**功耗**：本机 30 s 五工况功耗 sd 0.8–2.4 W（175–241 W 上），波动 <1%；
+240 s 长测见下一条。
+
 ## 2026-09-22 更正：Reduced 判定用错口径，恢复默认开启
 
 补上 DXGI 送显数据后推翻前一条结论。100 Hz 面板上，降级开/关两种配置的**实际显示

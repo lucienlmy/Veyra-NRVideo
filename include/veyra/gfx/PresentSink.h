@@ -93,9 +93,17 @@ public:
     // presents - displayed = submissions that never reached the screen (with
     // tearing/vsync off, dropped by flip). Unsupported (proxy swapchain or
     // pre-first-present) leaves supported=false; nothing is invented.
+    // Raw DXGI counters, deltas over the sampling window. NONE of these is a
+    // count of frames the panel actually showed, and no combination of them
+    // yields one on a tearing flip-discard swapchain (measured 2026-09-22:
+    // with 273 Present calls per second on a 100 Hz panel, PresentCount also
+    // reads 273 while both refresh counters read 100). Use PresentMon for
+    // scanout. presents: our own Present() calls. displayed: DXGI PresentCount
+    // (completed presents). refreshes: SyncRefreshCount (vblanks elapsed).
+    // displayedRefresh: PresentRefreshCount (vblank index, also ~= refreshes).
     struct FrameStatisticsDelta {
         bool supported=false;
-        uint64_t presents=0,displayed=0,refreshes=0;
+        uint64_t presents=0,displayed=0,refreshes=0,displayedRefresh=0;
         HRESULT result=S_OK;
     };
     FrameStatisticsDelta sampleFrameStatistics();
@@ -165,7 +173,7 @@ private:
     double displayRefreshHz_=0;
     bool frameStatisticsBaseValid_=false;
     uint64_t frameStatisticsBasePresents_=0;
-    UINT frameStatisticsBasePresentRefresh_=0,frameStatisticsBaseSyncRefresh_=0;
+    UINT frameStatisticsBasePresentRefresh_=0,frameStatisticsBaseSyncRefresh_=0,frameStatisticsBaseDisplayed_=0;
 };
 
 } // namespace veyra::gfx
