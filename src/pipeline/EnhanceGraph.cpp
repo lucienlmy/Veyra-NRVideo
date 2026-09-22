@@ -1511,8 +1511,15 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
                     veyra::log::error("color","Invalid native YUV plane or row stride");return false;
                 }
             }
-            for(unsigned plane=0;plane<2;++plane)for(unsigned y=0;y<rows[plane];++y)
-                std::memcpy(planes[plane]+size_t(y)*strides[plane],frame->data[plane]+ptrdiff_t(y)*frame->linesize[plane],rowBytes[plane]);
+            for(unsigned plane=0;plane<2;++plane){
+                // Capture frames are allocated with the upload pitch: copy the
+                // whole plane in one streaming memcpy (all but the last row's
+                // padding is a superset of rowBytes).
+                if(frame->linesize[plane]==int(strides[plane])&&rows[plane]>1)
+                    std::memcpy(planes[plane],frame->data[plane],size_t(strides[plane])*(rows[plane]-1)+rowBytes[plane]);
+                else for(unsigned y=0;y<rows[plane];++y)
+                    std::memcpy(planes[plane]+size_t(y)*strides[plane],frame->data[plane]+ptrdiff_t(y)*frame->linesize[plane],rowBytes[plane]);
+            }
         }else{
         nv12Ctx_ = sws_getCachedContext(nv12Ctx_, frame->width, frame->height,
             static_cast<AVPixelFormat>(frame->format),

@@ -299,6 +299,12 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
     // and swaps it into the mailbox once a frame is ready.
     struct CompressedSample{std::vector<uint8_t> payload;double time=0;Clock::time_point arrival;REFERENCE_TIME start=0,end=0;bool completeTime=false,bad=false,reset=false;};
     std::deque<CompressedSample> compressedQueue;size_t compressedQueueLimit=3;
+    // Recycled payload buffers: the callback used to allocate a fresh vector
+    // per sample under the mailbox lock (MJPEG 4K = several MB); the worker
+    // returns the buffer after decode (sweep 2026-09-22 C4).
+    std::vector<std::vector<uint8_t>> payloadPool;
+    std::vector<uint8_t> takePayload(){if(payloadPool.empty())return {};auto v=std::move(payloadPool.back());payloadPool.pop_back();v.clear();return v;}
+    void returnPayload(std::vector<uint8_t>&& v){if(payloadPool.size()<8){v.clear();payloadPool.push_back(std::move(v));}}
     std::thread decodeThread;std::condition_variable decodeWake;bool decodeStop=false;
     AVFrame* workerFrame=nullptr;uint64_t compressedDropped=0;double lastCallbackTime=0;
     // NV12 frames the decode worker may write into. A frame enters this pool
@@ -341,6 +347,7 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
             if(!draining){metadata.push_back(stamp);if(metadata.size()>64)metadata.pop_front();}
             const bool produced=compressedDecoder.decode(draining?nullptr:sample.payload.data(),draining?0:sample.payload.size(),
                 int64_t(sample.time*1e7),target,&decodedFrame,hardware);
+            if(!draining&&sample.payload.capacity()){std::lock_guard lock(mutex);returnPayload(std::move(sample.payload));}
             if(!produced){
                 draining=false;
                 // A decoder that needs more input before it can emit a frame is
@@ -444,11 +451,12 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
                     // payload; the decode worker produces the NV12 frame.
                     const auto* payload=reinterpret_cast<const uint8_t*>(data);
                     const size_t bytes=size_t(sample->GetActualDataLength());
-                    CompressedSample entry;entry.payload.assign(payload,payload+bytes);
+                    CompressedSample entry;entry.payload=takePayload();entry.payload.assign(payload,payload+bytes);
                     if(compressedQueue.size()>=compressedQueueLimit){
-                        if(codec==CaptureCodec::Mjpeg){compressedQueue.pop_front();++compressedDropped;++dropped;entry.bad=true;}
+                        if(codec==CaptureCodec::Mjpeg){returnPayload(std::move(compressedQueue.front().payload));compressedQueue.pop_front();++compressedDropped;++dropped;entry.bad=true;}
                         else{
                             compressedDropped+=compressedQueue.size();dropped+=compressedQueue.size();
+                            for(auto& queued:compressedQueue)returnPayload(std::move(queued.payload));
                             compressedQueue.clear();entry.reset=true;entry.bad=true;
                             log::warn("capture-decode","compressed queue overflow: discard damaged history and recover at keyframe");
                         }
@@ -819,7 +827,9 @@ bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.cle
     for(auto** f:{&p.frame,&p.pendingFrame,&p.stagingFrame}){
         *f=av_frame_alloc();if(!*f)return false;
         (*f)->format=p.layout.format;(*f)->width=p.info.width;(*f)->height=p.info.height;
-        if(av_frame_get_buffer(*f,32)<0)return false;
+        // 256-byte row alignment matches the graph's D3D12 upload pitch, so
+        // the ingest copy is one memcpy per plane instead of one per row.
+        if(av_frame_get_buffer(*f,256)<0)return false;
     }
     p.stagingBusy=false;
     if(!p.frameEvent)p.frameEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
@@ -1286,7 +1296,7 @@ void CaptureCardSource::close()noexcept{
     if(p.audioSession)p.audioSession->stop();p.audioError.clear();
     if(p.audioPassthrough)p.audioPassthrough->close();
     p.events.Reset();p.control.Reset();p.grab.Reset();p.nullFilter.Reset();p.grabFilter.Reset();p.audioSink.Reset();p.audioFilter.Reset();p.config.Reset();p.device.Reset();p.builder.Reset();p.graph.Reset();p.referenceClock.Reset();p.audioSession.reset();p.audioPassthrough.reset();
-    if(p.decodeThread.joinable()){{std::lock_guard lock(p.mutex);p.decodeStop=true;p.compressedQueue.clear();}p.decodeWake.notify_all();p.decodeThread.join();}
+    if(p.decodeThread.joinable()){{std::lock_guard lock(p.mutex);p.decodeStop=true;p.compressedQueue.clear();p.payloadPool.clear();}p.decodeWake.notify_all();p.decodeThread.join();}
     if(p.workerFrame)av_frame_free(&p.workerFrame);
     for(auto*& frame:p.compressedFree)if(frame)av_frame_free(&frame);
     p.compressedFree.clear();
