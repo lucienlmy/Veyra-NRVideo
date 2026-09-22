@@ -977,6 +977,7 @@ void populate(engine::EnhancementSettings s){
     send(204,CB_SETCURSEL,int(s.flow),0);send(205,CB_SETCURSEL,int(s.content),0);
     send(209,CB_SETCURSEL,int(s.opticalFlowBackend),0);
     check(215,s.amdFlowHalfResolution?BST_CHECKED:BST_UNCHECKED);
+    check(210,s.fgStrictAdmission?BST_CHECKED:BST_UNCHECKED);
     send(216,CB_SETCURSEL,int(s.audioSync));
     if(!editDrafts.contains(217)&&GetFocus()!=item(217))putText(217,std::to_wstring(s.audioOffsetMs).c_str());
     EnableWindow(item(217),s.audioSync==engine::AudioSyncMode::Manual);
@@ -1039,6 +1040,7 @@ bool liveField(int id){
         case 633:s.videoHdr.middleGray=unsigned(send(id,TBM_GETPOS));break;
         case 634:s.videoHdr.peakNits=unsigned(send(id,TBM_GETPOS));break;
         case 215:s.amdFlowHalfResolution=checked(id)==BST_CHECKED;break;
+        case 210:s.fgStrictAdmission=checked(id)==BST_CHECKED;break;
         case 216:s.audioSync=static_cast<engine::AudioSyncMode>(send(id,CB_GETCURSEL));break;
         case 217:{wchar_t value[32]{};GetWindowTextW(item(id),value,32);wchar_t* end=nullptr;const auto parsed=wcstol(value,&end,10);if(end==value||*end||parsed<-250||parsed>250){message(L"声音偏移须为 -250 至 250 ms");return false;}s.audioOffsetMs=int(parsed);break;}
         case 222:{wchar_t value[32]{};GetWindowTextW(item(id),value,32);wchar_t* end=nullptr;const auto parsed=wcstol(value,&end,10);if(end==value||*end||parsed<0||parsed>64){message(L"剔除区羽化须为 0 至 64 像素");return false;}s.protection.featherPixels=float(parsed);break;}
@@ -1305,12 +1307,13 @@ case WM_CREATE:{window=h;font=makeFont(h);items.clear();displayedBackendWarning.
     combo(208,1,78,{L"DLSS 帧生成",L"Intel XeSS · 实验显示补帧 2X-4X"});
     add(L"STATIC",L"补帧倍率",1112,0,1,12,122,-1,24);
     combo(202,1,150,{L"关闭补帧",L"2X · 一张中间帧",L"3X · 两张中间帧",L"4X · 三张中间帧"});
-    add(L"STATIC",L"运动估算",1113,0,1,12,194,-1,24);
-    combo(209,1,222,{L"NVIDIA NVOF 光流",L"AMD FidelityFX 光流 · 实验",L"GPU DIS 光流 · FAST 实验"});
-    add(L"BUTTON",L"AMD 性能档 · 光流宽高各减半",215,BS_AUTOCHECKBOX|WS_TABSTOP,1,12,266,-1,36);
-    combo(204,1,310,{L"NR / DLSS光流 · 性能",L"NR / DLSS光流 · 平衡",L"NR / DLSS光流 · 质量"});
-    add(L"STATIC",L"内容节奏",1114,0,1,12,354,-1,24);
-    combo(205,1,382,{L"采用源时间戳",L"自动识别内容节奏",L"识别30fps内容节奏",L"识别50fps内容节奏",L"识别60fps内容节奏",L"采集60→30fps处理（PS5 30帧）"});
+    add(L"BUTTON",L"严格补帧节奏 · 赶不上期限的整组不生成（默认关闭，生成更多帧）",210,BS_AUTOCHECKBOX|WS_TABSTOP,1,12,190,-1,36);
+    add(L"STATIC",L"运动估算",1113,0,1,12,234,-1,24);
+    combo(209,1,262,{L"NVIDIA NVOF 光流",L"AMD FidelityFX 光流 · 实验",L"GPU DIS 光流 · FAST 实验"});
+    add(L"BUTTON",L"AMD 性能档 · 光流宽高各减半",215,BS_AUTOCHECKBOX|WS_TABSTOP,1,12,306,-1,36);
+    combo(204,1,350,{L"NR / DLSS光流 · 性能",L"NR / DLSS光流 · 平衡",L"NR / DLSS光流 · 质量"});
+    add(L"STATIC",L"内容节奏",1114,0,1,12,394,-1,24);
+    combo(205,1,422,{L"采用源时间戳",L"自动识别内容节奏",L"识别30fps内容节奏",L"识别50fps内容节奏",L"识别60fps内容节奏",L"采集60→30fps处理（PS5 30帧）"});
     add(L"STATIC",L"AMD FidelityFX 为运动估算；不是 AMD NR。XeSS 为实验预览 2X，不支持导出。",1110,0,1,12,426,-1,72);
     add(L"STATIC",L"采集音频同步",1115,0,1,12,608,-1,26);
     combo(216,1,644,{L"自动同步 · 软件估算",L"手动声音偏移",L"关闭补偿"});
@@ -1798,7 +1801,7 @@ __declspec(noinline) LRESULT settingsCommand(HWND h,UINT msg,WPARAM wp,LPARAM lp
         }
         return 0;
     }
-    if(msg==WM_COMMAND&&!populating&&((LOWORD(wp)==209&&HIWORD(wp)==CBN_SELCHANGE)||(LOWORD(wp)==215&&HIWORD(wp)==BN_CLICKED))){liveField(LOWORD(wp));return 0;}
+    if(msg==WM_COMMAND&&!populating&&((LOWORD(wp)==209&&HIWORD(wp)==CBN_SELCHANGE)||((LOWORD(wp)==215||LOWORD(wp)==210)&&HIWORD(wp)==BN_CLICKED))){liveField(LOWORD(wp));return 0;}
 switch(msg){
 case WM_COMMAND:{const int id=LOWORD(wp);if(!populating&&((id>=202&&id<=205||id==207||id==208)&&HIWORD(wp)==CBN_SELCHANGE||(id>=700&&id<=732)&&HIWORD(wp)==BN_CLICKED)){liveField(id);return 0;}if((id==206||id==213||id==214)&&HIWORD(wp)==BN_CLICKED){const auto accepted=SendMessageW(GetParent(h),WM_APP+45,id,checked(206));message(accepted?(id==213?L"请在画面中左键拖动框选；Esc取消。":L"已请求更新NR剔除区。"):L"未能操作：请先打开画面，或清除已满的4个区域。");return 0;}if((id==200||id==201)&&HIWORD(wp)==BN_CLICKED){const bool accepted=SendMessageW(GetParent(h),WM_APP+44,id,checked(id))!=0;message(accepted?L"已请求开关；确认帧边界结果后生效。":L"总增强正在切换，请待当前事务完成。");return 0;}if(HIWORD(wp)==EN_SETFOCUS){for(auto& item:items)if(GetDlgCtrlID(item.h)==id&&item.page==page){RECT r{};GetClientRect(h,&r);int height=MulDiv(r.bottom,96,veyra::ui::layoutDpi(h))-128;if(item.y<scroll)scroll=item.y;if(item.y+item.height>scroll+height)scroll=item.y+item.height-height;arrange();break;}}if(!populating&&id>=100&&id<=111&&HIWORD(wp)==EN_CHANGE){liveField(id);return 0;}
     if(!populating&&id>=100&&id<=111&&HIWORD(wp)==EN_KILLFOCUS){populate(enhancementEnabled?controller->snapshot().desired:configuredSettings);return 0;}
