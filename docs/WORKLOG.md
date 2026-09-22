@@ -16,7 +16,8 @@
 首次冒烟误用 4K 素材导致 `video-sr-nr-fg` 断言失败，原因是 4K 输入下超分被旁路，改用标准 1080p
 夹具后通过；失败产物保留在 `tmp/portable-smoke-4k-input-attempt/`，不当作产品回归。
 
-README / README_EN 已按用户要求精简为只讲 1.4.4，老版本内容删除，细节指向 Release；
+README / README_EN 的更新日志已换成只保留 1.4.4；**首次改写误把介绍、功能表和使用教程整段删掉，
+用户指出后已在 `b5821cc` 从 `d93864f` 全文找回**，正文结构不变，只替换更新日志与版本引用；
 交流群二维码换为 `docs/images/1.4.4/community-group.png`（7 天内有效），赞助码未动，
 Release 正文两个固定区块各 `width=220`，两个图片 URL 与 4 个下载 URL 均 HTTP 200。
 完整执行记录见 [1.4.4 发布执行记录](RELEASE_1.4.4_EXECUTION.md)。
