@@ -9,6 +9,9 @@
 [WHOLE_PRODUCT_ISSUE_LEDGER](WHOLE_PRODUCT_ISSUE_LEDGER_2026-09-22.md) 中标为
 "性能上限/暂缓/撤回"的项目不在本计划内。
 
+> 2026-09-22 执行结果：第 1–6 批已实施，逐项状态、撤回与未做原因见
+> [执行记录](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。下文为施工前的计划原文。
+
 ## 0. 总则
 
 - 每批开工前打 tag `checkpoint/plan-b<N>-pre-<日期>`，在同一隔离分支顺序施工；

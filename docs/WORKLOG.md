@@ -1,5 +1,17 @@
 # Veyra 工作记录
 
+## 2026-09-22 统一修复计划第 1–6 批实施与短测
+
+提交 `e11aa56`，标签 `checkpoint/plan-b6-done-20260922`。已修 30 项、撤回 2 项（A2 upload
+fence 前移引发跨队列 barrier 错误；B6 `recovering()` 有单测使用）、未做 12 项（采集三缓冲、
+中途硬解回退、owner 事件唤醒、每帧诊断缓冲、step lambda 收敛等，原因见执行记录）。
+门槛：UI 合同 384 用例、弹窗 19、字幕面板 31、overlay 18、scheduler 单测 127、修复合同 205、
+采集音频 18、FG 呈现 D3D12 errors=0、backend-switch 16、admission pass、SEH 注入写出
+minidump 并 flush。`ui-layout-dpi.py` 的"status detail cannot scroll"在基线 exe 同样失败，
+非本轮引入。FG 30 s 短测：原生 XeSS 4X Present 阻塞 11.5→0.73 ms，原生 DLSS 6X 长空档 3→0、
+提交 237→270/s，SR+NR XeSS 4X 源 45.4→49.9/s。详见
+[执行记录](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。长测与实卡由用户验收；未合并、未推送。
+
 ## 2026-09-22 统一修复计划
 
 合并 FG 独立修复、全软件清扫与采集延迟复查为一份分批计划：
