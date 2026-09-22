@@ -1,5 +1,16 @@
 # Veyra 工作记录
 
+## 2026-09-22 统一修复第 8 批（收尾）与 XeSS 复跑排查
+
+存档 `checkpoint/plan-b8-pre-20260922`，提交 `8a1bb0a`，标签 `checkpoint/plan-b8-done-20260922`。
+补做：压缩采集 payload 池、原生采集帧 256 字节行对齐 + 每平面单次 memcpy、每秒日志并入
+`player-timing`、调度器 OnExit 声明顺序。门槛全过，实卡 FG/无 FG 25 s 对照持平。第 8 批
+FG 矩阵整体比第 6 批慢约 10%，原生 XeSS 4X Present 阻塞 0.73→12 ms；用第 6 批提交重建
+exe 交替复跑 2×2，两版完全一致（差 <0.2 ms），差异来自时段（GPU 均值 87%→95%），不是
+代码回归。计划中 B1/延迟 3b 的完整版（step lambda 收敛、直写 upload 堆）与延迟 1 未做。
+运行入口 exe SHA256 前 16 位 `FF40BCC80A3667A0`；第 6 批对照 exe 在 `app-b6/`。
+详见 [执行记录 §3c](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+
 ## 2026-09-22 统一修复第 7 批（补做）
 
 存档 `checkpoint/plan-b7-pre-20260922`，提交 `6d019dc`，标签 `checkpoint/plan-b7-done-20260922`。

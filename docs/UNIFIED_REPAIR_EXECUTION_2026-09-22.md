@@ -5,8 +5,8 @@
 计划见 [统一修复计划](UNIFIED_REPAIR_PLAN_2026-09-22.md)。本机 RTX 5070、100 Hz
 显示器；所有数字为 30 s 短测或单元/合同测试，长测、实卡、多显示器、HDR 屏、肉眼画质
 由用户验收。运行入口 `E:/项目/Veyra/tests/fg-independent-repair-20260922/app/veyra.exe`
-（第 7 批后 SHA256 前 16 位 `703B9D073AD28197`，staging，运行库为 junction，非便携包）。
-产物：`E:/项目/Veyra/tests/fg-independent-repair-20260922/{b12,b3456}/`，构建日志
+（第 8 批后 SHA256 前 16 位 `FF40BCC80A3667A0`，staging，运行库为 junction，非便携包）。
+产物：`E:/项目/Veyra/tests/fg-independent-repair-20260922/{b12,b3456,b7,b8}/`，构建日志
 `E:/项目/Veyra/logs/fg-independent-repair-20260922/build-b*.log`。
 
 ## 1. 逐项状态
@@ -135,6 +135,59 @@ FG 下延迟由相位等待主导，且复制本就与 GPU 工作重叠；收益
 工况用 `test-capture-version-comparison.ps1` 120 s 测，由用户执行。注意 `capture-callback`
 日志的 `entryToLockMs` 现在包含锁外复制时间，与旧版数值不可直接比较。
 
+## 3c. 第 8 批（收尾，提交 `8a1bb0a`，标签 `checkpoint/plan-b8-done-20260922`）
+
+| 编号 | 状态 | 备注 |
+| --- | --- | --- |
+| C4 | 已修 | 压缩采集 payload 缓冲池（≤8 个），回调 `takePayload` 复用，解码后/丢弃/清空时归还；`close()` 清池 |
+| 延迟 3b（有界） | 已修 | 原生采集 AVFrame 以 256 字节行对齐分配，与 D3D12 upload pitch 一致；图入口 `linesize==stride` 时每平面一次 `memcpy`，否则逐行回退。**未做**直写 upload 堆（需 mailbox 与 upload 环所有权合并） |
+| E5 | 已修 | `present-deviation`/`output-queue`/`frame-trace` 每秒行并入 `player-timing`（新增 `entryAbsP95Ms returnAbsP95Ms pendingFrames enhancementProcessingMs`）；`VEYRA_VERBOSE_FRAME_LOGS` 下保留旧行 |
+| B1（有界） | 已修 | `OnExit stopPresentation` 移到 `while(!stop_)` 前一行并加注释：它最后声明、最先析构，调度器在其 lambda 引用的局部之前销毁。**未做** step lambda 状态收敛为结构体 |
+
+门槛（`b8/`）：scheduler 127、修复合同 205、FG 呈现 D3D12 errors=0、backend-switch 16、
+实卡 rate test PASS；25 s 实卡 NR+DLSS4X `callbackToPresentReturnP95` 42.5 ms dropped 0；
+25 s 实卡无 FG 新/旧 exe 对照 11.56 vs 11.52 ms（持平，readAge 0.98 vs 1.03 ms，processCpu
+2.01 vs 2.06 ms）。`veyra_capture_compressed_tests` SKIP（缺 `loop/local/fixed_clips/test_h264_1080p.mp4`）。
+
+### 3c.1 第 8 批 FG 矩阵（`b8/ab-final/`）与第 6 批对照
+
+| 工况 | 指标 | 第 8 批 | 第 6 批 |
+| --- | --- | ---: | ---: |
+| SR+NR XeSS 4X | 源/s | 45.8 | 49.9 |
+| | 原帧间隔 p95 / max | 26.2 / 27.1 | 23.0 / 24.8 |
+| 原生 XeSS 4X | 源/s | 58.8 | 60.0 |
+| | Present 阻塞 p50 | **12.0** | 0.73 |
+| | `gpuReadyP95` | 18.0 | 15.8 |
+| 原生 DLSS 6X | 提交/s | 240.2 | 269.9 |
+| | 间隔 >16.67 ms | 2 | 0 |
+| | reduced 对 | 792 | 574 |
+| SR+NR DLSS 6X | 提交/s | 121.1 | 140.3 |
+| | 间隔 >16.67 ms | 142 | 118 |
+| 原生 DLSS 2X | 提交/s | 120.0 | 120.0 |
+| | 间隔 p95 | 8.79 | 8.76 |
+
+所有工况 `errorLines=0`。第 8 批矩阵整体比第 6 批慢一档（约 8–12%），原生 XeSS 4X 的
+Present 阻塞回到 12 ms。**已排除代码回归**：用第 6 批提交 `e11aa56` 重新构建
+（`build/fg-b6-check-20260922`，exe SHA 前 16 位 `5E5C2B0EF2DE2FEC`，staging
+`tests/fg-independent-repair-20260922/app-b6/`），与第 8 批 exe 交替各跑 2 次同一工况：
+
+| 运行 | 源/s | Present 阻塞 p50 / p95 | `gpuReadyP95` | >16.67 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 第 6 批矩阵（15:54） | 60.0 | 0.73 / 1.07 | 15.8 | 412 |
+| 第 8 批矩阵（16:22） | 58.8 | 12.0 / 12.9 | 18.0 | 612 |
+| 第 8 批 exe 复跑 1/2 | 58.0 / 58.0 | 11.4 / 12.3，11.3 / 12.8 | 18.1 / 18.2 | 769 / 727 |
+| **第 6 批 exe** 交替 1/2 | 58.2 / 58.0 | 11.4 / 12.4，11.6 / 12.5 | 18.1 / 18.1 | 760 / 760 |
+| 第 8 批 exe 交替 1/2 | 57.9 / 57.8 | 11.4 / 12.4，11.4 / 12.4 | 18.1 / 18.1 | 771 / 772 |
+
+同一时段两个 exe 完全一致（差异 <0.2 ms），差的是时段：第 6 批矩阵时 NVML GPU 均值 87%，
+之后所有运行都是 94–95%，`gpuReadyP95` 抬高 2.3 ms。这与独立复核里记录的 XeSS 提供方
+双稳态（源周期 38 vs 54 之类的两档）一致：GPU 余量少 2–3 ms 时提供方节奏线程回到
+"owner 在 Present 里等一个输出周期" 的状态。**结论**：第 7/8 批没有引入回归；第 6 批矩阵
+的 0.73 ms 是有利时段的一次结果，不能当作稳定收益。用户长测请按 §6 第 1 条同时记录
+NVML GPU 均值与 `gpuReadyP95`，并对比 `VEYRA_DISABLE_XESS_SOURCE_TIMING=1`。
+原始数据：`b8/ab-xess-rerun{1,2}`、`b8/bisect-{b6,b8}-{1,2}`，日志
+`logs/fg-independent-repair-20260922/{ab-xess-rerun*,bisect-*}.log`。
+
 ## 4. 未做项的原因与下一步
 
 - **C3/C4/延迟 3b（采集三缓冲、锁外复制、直写 upload 堆）**：需要重构 mailbox 所有权
@@ -145,7 +198,8 @@ FG 下延迟由相位等待主导，且复制本就与 GPU 工作重叠；收益
   `WaitForMultipleObjects` 需要采集源暴露事件句柄；与 C3 一起做。
 - **延迟 1（专业模式 Composed 测量）**：需 PresentMon 权限或用户实屏，请用户在长测时
   对比全屏与专业模式的 `display-stats`。
-- **E5、A4/A5、B1、C7、C8/C9/E6**：低收益或重构性质，保留在清扫文档待办。
+- **第 7/8 批已补做** C3、C4、延迟 2、延迟 3b（有界）、B5、C7、A4/A5、E5、E6、C9、B1（有界）。
+- **仍未做**：直写 upload 堆（延迟 3b 完整版）、step lambda 状态收敛（B1 完整版）、延迟 1（专业模式 Composed 测量）。
 
 ## 5. 撤回记录
 
@@ -156,7 +210,10 @@ FG 下延迟由相位等待主导，且复制本就与 GPU 工作重叠；收益
 ## 6. 用户长测请看
 
 1. `b3456/ab-final` 的收益是否在 120 s 与实卡上复现；重点 XeSS 原生 4X 的 Present 阻塞
-   和 DLSS 6X 的零长空档。
+   和 DLSS 6X 的零长空档。注意 §3c.1：原生 XeSS 4X 的 0.73 ms 只在 GPU 均值 87% 的时段
+   出现，之后稳定在 11–12 ms；长测请记录 NVML GPU 均值与 `gpuReadyP95` 一起看。
+1b. 第 8 批新增：压缩采集（MJPEG）长播内存是否平稳；无 FG 1440p60 实卡 120 s 用
+   `test-capture-version-comparison.ps1` 对照 `app-b6/veyra.exe` 与 `app/veyra.exe`。
 2. 字幕快捷键、失败原因 toast、窄窗口截图按钮位置、弹出下拉不再自动关闭。
 3. 拖边框、中键拖动缩放（字幕开启时）、诊断面板滚动。
 4. 播放中拔插耳机是否在 1 s 内恢复。
