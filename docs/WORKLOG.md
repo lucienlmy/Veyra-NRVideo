@@ -1,5 +1,41 @@
 # Veyra 工作记录
 
+## 2026-09-22 1.4.4 test6：严格补帧节奏行重排、面板滚动提交重绘
+
+用户反馈 test5 两处 UI 问题：`严格补帧节奏` 与其他控件黏在一起/重叠；专业模式快速滚动出现白影、
+重叠。定位结果（不是观感问题，是坐标与重绘两个实打实的 bug）：
+
+- `210` 只加进了创建列表，没有加进 1479 行那段“final layout”重排里，保留了创建时的
+  `y=190`；而重排后的光流质量 combo 占 `166..194`、`补帧方式` 标签占 `214..238`，
+  于是它同时压住上下两行。实测（`veyra_settings_layout_tests`）确认重叠 4 dip / 12 dip。
+- `arrange()` 用 `SWP_NOREDRAW` 搬子窗口后只做异步 `RDW_INVALIDATE`，滚动那一刻的屏幕
+  仍是旧位置像素。实测滚动 3 格后立即抓屏与稳定后抓屏差 **4263 像素**。
+
+修复：
+
+- 帧生成页几何改为单一来源（创建后一次性按 8 dip 节奏排布）：`210` 落在 `补帧倍率`
+  正下方 `y=370`，上下各 ≥8 dip；`内容节奏/帧同步/状态` 依次下移；`Smooth Motion` 展开
+  说明回到被它推动的区块之前（`helpOffset` 只影响它下面的行），展开后不再压住任何控件。
+- `严格补帧节奏` 标签缩短为“严格补帧节奏（默认关闭）”，完整含义进 `settingHelp(210)`
+  提示；按钮点击/回读行为未变（仍走 `liveField`）。
+- `arrange(bool commitScroll)`：滚动路径（滚轮、滚动条、拖拽滚动条、焦点自动滚入）改为
+  `RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_UPDATENOW`，在输入消息内提交整帧；同时把滚出视口的
+  行改为隐藏（虚拟化），一次滚动只重绘可见行。窗口尺寸变化/切页仍走原来的异步失效，
+  避免恢复此前修掉的缩放卡顿。补帧调度逻辑一行未动。
+
+验证：新增 `veyra_settings_layout_tests`（96/192 DPI 布局 + 展开态 + 点击提交 + 滚动抓屏比对），
+`exit=0`，滚动残影 4263→**0 像素**；`veyra_slider_reset_tests`、`veyra_control_paint_tests`、
+`veyra_ui_contract_tests`(384 用例)、`veyra_repair_contract_tests`(205 项) 全过。
+打包后 test6 exe 实跑 `--nr --smoke-repair-ui`（30 s，p001.mp4）日志
+`PASS native controls, drafts, master sync, SR extent, scroll viewport, fullscreen, daily controls`，`exit=0`。
+（`--smoke-repair-ui` 不带 `--nr` 时会在 `NR_off_click_works_with_invalid_draft` 停住；用未改动的
+test5 exe 复现同一结果，属该冒烟对初始 NR 状态的既有依赖，不是本轮回归。）
+
+产物：`E:\项目\Veyra\build\release-144-20260922\veyra.exe`（1.4.4，
+SHA256 `92AC81B14AB050895B33FD2A822C179F65C4A42BD89C6C00772B89C5684D7121`），
+测试包 `E:\项目\Veyra\test-packages\1.4.4\Veyra-1.4.4-test6`（121 文件，与 test5 逐文件核对，
+仅 `veyra.exe` 不同，运行库/清单身份未变）。**未推送、未发布。**
+
 ## 2026-09-22 帧同步重新设计：输出上限接回生成量，删掉测不出作用的模式选择器
 
 存档 `checkpoint/pre-pacing-redesign-20260922`。实测确认三个模式无差异后重做：

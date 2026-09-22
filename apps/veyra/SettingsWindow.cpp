@@ -57,14 +57,14 @@ void putText(int id,const wchar_t* value){setText(item(id),value);}
 void check(int id,UINT value){if(send(id,BM_GETCHECK)!=value)send(id,BM_SETCHECK,value);}
 UINT checked(int id){return UINT(send(id,BM_GETCHECK));}
 int viewportHeight(){RECT r{};GetClientRect(body,&r);return std::max(1,MulDiv(r.bottom,96,veyra::ui::layoutDpi(window)));}
-void arrange();
+void arrange(bool commitScroll=false);
 LRESULT CALLBACK bodyProc(HWND h,UINT msg,WPARAM wp,LPARAM lp){
     if(msg==WM_ERASEBKGND)return 1;
     if(msg==WM_PAINT){PaintBuffer paint(h);fillSurface(paint.dc,paint.rect,h);if(contentHeight>viewportHeight()){int thumb=std::max(dip(h,30),int(paint.rect.bottom*float(viewportHeight())/contentHeight));int y=int((paint.rect.bottom-thumb)*float(scroll)/std::max(1,contentHeight-viewportHeight()));RECT bar{paint.rect.right-dip(h,5),y,paint.rect.right-dip(h,2),y+thumb};roundRect(paint.dc,bar,line,dip(h,2));}return 0;}
     if(msg==WM_CTLCOLORSTATIC||msg==WM_CTLCOLOREDIT||msg==WM_CTLCOLORLISTBOX||msg==WM_CTLCOLORBTN)return colors(msg,wp,lp);
     if(msg==WM_COMMAND||msg==WM_HSCROLL||msg==WM_MOUSEWHEEL||msg==WM_VSCROLL||msg==WM_NOTIFY)return SendMessageW(window,msg,wp,lp);
     if(msg==WM_LBUTTONDOWN){RECT r{};GetClientRect(h,&r);if(GET_X_LPARAM(lp)>=r.right-dip(h,12))SetCapture(h);}
-    if((msg==WM_LBUTTONDOWN||msg==WM_MOUSEMOVE)&&GetCapture()==h){RECT r{};GetClientRect(h,&r);scroll=int(float(GET_Y_LPARAM(lp))/std::max(1L,r.bottom)*std::max(0,contentHeight-viewportHeight()));arrange();return 0;}
+    if((msg==WM_LBUTTONDOWN||msg==WM_MOUSEMOVE)&&GetCapture()==h){RECT r{};GetClientRect(h,&r);scroll=int(float(GET_Y_LPARAM(lp))/std::max(1L,r.bottom)*std::max(0,contentHeight-viewportHeight()));arrange(true);return 0;}
     if(msg==WM_LBUTTONUP&&GetCapture()==h){ReleaseCapture();return 0;}
     return DefWindowProcW(h,msg,wp,lp);
 }
@@ -1191,7 +1191,7 @@ void layoutEnhancePage(int width){
     }
 }
 
-void arrange(){
+void arrange(bool commitScroll){
     if(!window||!body)return;RECT r{};GetClientRect(window,&r);int width=MulDiv(r.right,96,veyra::ui::layoutDpi(window)),height=MulDiv(r.bottom,96,veyra::ui::layoutDpi(window));
     const int sticky=128,viewport=std::max(1,height-sticky);contentHeight=0;
     // The child still has its previous size until SetWindowPos below.
@@ -1211,6 +1211,9 @@ void arrange(){
     }
     int helpHeight=0;
     if(smoothMotionHelpExpanded){auto dc=GetDC(window);auto old=SelectObject(dc,font);RECT textRect{0,0,dip(window,std::max(1,width-24)),0};DrawTextW(dc,smoothMotionHelp,-1,&textRect,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,old);ReleaseDC(window,dc);helpHeight=MulDiv(textRect.bottom,96,layoutDpi(window))+16;}
+    // The Smooth Motion explainer unfolds between the frame-generation rows and
+    // the pacing rows, so everything below it moves down by the measured text
+    // height. The control keeps its own y; only the rows after it shift.
     const auto helpOffset=[&](const Item& entry){const auto id=GetDlgCtrlID(entry.h);return entry.page==1&&(id==1114||id==205||id==1110||id==240||id==241||id==242||id==243||id==244||id==1147||id==1150)?helpHeight:0;};
     for(auto& entry:items){if(GetDlgCtrlID(entry.h)==1120)entry.height=helpHeight;
         if(entry.page==page&&!entry.hidden&&(GetDlgCtrlID(entry.h)!=1120||smoothMotionHelpExpanded)){wchar_t cls[32]{};GetClassNameW(entry.h,cls,32);contentHeight=std::max(contentHeight,entry.y+helpOffset(entry)+(_wcsicmp(cls,L"COMBOBOX")==0?36:entry.height)+12);}}
@@ -1218,9 +1221,27 @@ void arrange(){
     scroll=std::clamp(scroll,0,std::max(0,contentHeight-viewport));
     SetWindowPos(body,nullptr,0,dip(window,sticky),r.right,dip(window,viewport),SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
     auto batch=BeginDeferWindowPos(int(items.size()));
-    for(auto& entry:items){bool fixed=entry.page==-1,visible=!entry.hidden&&(entry.page==page||fixed)&&(GetDlgCtrlID(entry.h)!=1120||smoothMotionHelpExpanded);int w=entry.w<0?width-entry.x-12:entry.w;int y=fixed?(GetDlgCtrlID(entry.h)==400?0:(GetDlgCtrlID(entry.h)==211||GetDlgCtrlID(entry.h)==219)?86:42):entry.y+helpOffset(entry)-scroll;
-        if(fixed){SetWindowPos(entry.h,nullptr,dip(window,entry.x),dip(window,y),dip(window,std::max(1,w)),dip(window,42),SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOREDRAW);continue;}batch=DeferWindowPos(batch,entry.h,nullptr,dip(window,entry.x),dip(window,y),dip(window,std::max(1,w)),dip(window,entry.height),SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOREDRAW|SWP_NOCOPYBITS|(visible?SWP_SHOWWINDOW:SWP_HIDEWINDOW));}
-    EndDeferWindowPos(batch);RedrawWindow(body,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN);InvalidateRect(window,nullptr,FALSE);
+    for(auto& entry:items){
+        const int id=GetDlgCtrlID(entry.h);
+        const bool fixed=entry.page==-1;
+        const int w=entry.w<0?width-entry.x-12:entry.w;
+        const int y=fixed?(id==400?0:(id==211||id==219)?86:42):entry.y+helpOffset(entry)-scroll;
+        if(fixed){SetWindowPos(entry.h,nullptr,dip(window,entry.x),dip(window,y),dip(window,std::max(1,w)),dip(window,42),SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOREDRAW);continue;}
+        wchar_t cls[32]{};GetClassNameW(entry.h,cls,32);
+        const int height=_wcsicmp(cls,L"COMBOBOX")==0?36:entry.height;
+        // Rows that scrolled completely out of the viewport are hidden instead of
+        // being parked outside the clip region, so a wheel notch only repaints
+        // the rows that are actually on screen.
+        const bool visible=!entry.hidden&&entry.page==page&&(id!=1120||smoothMotionHelpExpanded)&&y+height>-4&&y<viewport+4;
+        batch=DeferWindowPos(batch,entry.h,nullptr,dip(window,entry.x),dip(window,y),dip(window,std::max(1,w)),dip(window,entry.height),SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOREDRAW|SWP_NOCOPYBITS|(visible?SWP_SHOWWINDOW:SWP_HIDEWINDOW));
+    }
+    EndDeferWindowPos(batch);
+    // The panel scrolls by moving child windows, so the window is only correct
+    // once every moved row has repainted. A scroll commits that here, inside the
+    // input message: a deferred repaint is what shows up as ghosted or
+    // duplicated rows while the wheel is spinning.
+    RedrawWindow(body,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|(commitScroll?RDW_UPDATENOW:0));
+    InvalidateRect(window,nullptr,FALSE);
 }
 
 HWND add(const wchar_t* cls,const wchar_t* text,int id,DWORD style,int group,int x,int y,int width,int height){auto h=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|style,0,0,1,1,group==-1?window:body,reinterpret_cast<HMENU>(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(h,WM_SETFONT,WPARAM(font),TRUE);themeControl(h);if(group!=-1)SetWindowSubclass(h,scrollOnly,950,0);items.push_back({h,group,x,y,width,height});return h;}
@@ -1307,7 +1328,7 @@ case WM_CREATE:{window=h;font=makeFont(h);items.clear();displayedBackendWarning.
     combo(208,1,78,{L"DLSS 帧生成",L"Intel XeSS · 实验显示补帧 2X-4X"});
     add(L"STATIC",L"补帧倍率",1112,0,1,12,122,-1,24);
     combo(202,1,150,{L"关闭补帧",L"2X · 一张中间帧",L"3X · 两张中间帧",L"4X · 三张中间帧"});
-    add(L"BUTTON",L"严格补帧节奏 · 赶不上期限的整组不生成（默认关闭，生成更多帧）",210,BS_AUTOCHECKBOX|WS_TABSTOP,1,12,190,-1,36);
+    add(L"BUTTON",L"严格补帧节奏（默认关闭）",210,BS_AUTOCHECKBOX|WS_TABSTOP,1,12,366,-1,36);
     add(L"STATIC",L"运动估算",1113,0,1,12,234,-1,24);
     combo(209,1,262,{L"NVIDIA NVOF 光流",L"AMD FidelityFX 光流 · 实验",L"GPU DIS 光流 · FAST 实验"});
     add(L"BUTTON",L"AMD 性能档 · 光流宽高各减半",215,BS_AUTOCHECKBOX|WS_TABSTOP,1,12,306,-1,36);
@@ -1480,14 +1501,9 @@ case WM_CREATE:{window=h;font=makeFont(h);items.clear();displayedBackendWarning.
         if(id==201)entry.y=176;
         if(id>=730&&id<=732)entry.y=220;
         if(id==207)entry.y=264;
+        // The capture/stream audio sync controls are created here but read as a
+        // separate audio page.
         switch(id){
-        case 1113:entry.y=50;break;case 209:entry.y=78;break;
-
-        case 215:entry.y=122;break;case 204:entry.y=166;break;
-        case 1111:entry.y=214;break;case 208:entry.y=242;break;
-        case 1112:entry.y=286;break;case 202:entry.y=314;break;
-        case 1114:entry.y=402;break;case 205:entry.y=430;break;
-        case 1110:entry.y=474;break;
         case 1115:entry.page=4;entry.y=12;break;
         case 216:entry.page=4;entry.y=50;break;
         case 1116:case 217:entry.page=4;entry.y=100;break;
@@ -1507,6 +1523,33 @@ case WM_CREATE:{window=h;font=makeFont(h);items.clear();displayedBackendWarning.
     ghost(item(221));
     SetPropW(item(221),L"veyra.tip",HANDLE(L"查看 NVIDIA App 的 AI 插帧开启方法。这里只提供说明，不修改驱动，也不限制叠加补帧。"));
     add(L"STATIC",smoothMotionHelp,1120,SS_NOPREFIX,1,12,400,-1,1);
+
+    // Reading order for the frame-generation page, and the single source of
+    // truth for its geometry. Every row keeps the same 8 dip rhythm the other
+    // pages use; the strict-cadence switch owns the row directly under the
+    // multiplier selector (it used to be created at y=190, which placed it on
+    // top of the optical-flow combo *and* under the "补帧方式" label), and the
+    // Smooth Motion help moved to the end so expanding it can never overlap the
+    // controls above it.
+    // The Smooth Motion explainer sits directly under the frame-generation
+    // rows; expanding it shifts every row below by the measured text height
+    // (see the frame page help offset in arrange()).
+    for(auto& entry:items){
+        switch(GetDlgCtrlID(entry.h)){
+        case 1113:entry.y=50;break;case 209:entry.y=82;break;
+        case 215:entry.y=126;break;case 204:entry.y=170;break;
+        case 1111:entry.y=214;break;case 208:entry.y=246;break;
+        case 1112:entry.y=290;break;case 202:entry.y=322;break;
+        case 210:entry.y=370;break;
+        case 221:entry.y=418;break;case 1120:entry.y=462;break;
+        case 1114:entry.y=470;break;case 205:entry.y=502;break;
+        case 1110:entry.y=546;break;
+        case 240:entry.y=626;break;case 242:entry.y=666;break;
+        case 243:entry.y=710;break;
+        case 244:case 1147:entry.y=754;break;
+        case 1150:entry.y=790;break;
+        }
+    }
     setText(item(1113),L"光流 · 运动估算");
     setText(item(1115),L"采集 / 串流音频同步");
     add(L"STATIC",L"调整实时输入的声音补偿，不改变补帧倍率。正值让声音更晚；自动模式由软件估算。",1118,0,4,12,148,-1,90);
@@ -1803,7 +1846,7 @@ __declspec(noinline) LRESULT settingsCommand(HWND h,UINT msg,WPARAM wp,LPARAM lp
     }
     if(msg==WM_COMMAND&&!populating&&((LOWORD(wp)==209&&HIWORD(wp)==CBN_SELCHANGE)||((LOWORD(wp)==215||LOWORD(wp)==210)&&HIWORD(wp)==BN_CLICKED))){liveField(LOWORD(wp));return 0;}
 switch(msg){
-case WM_COMMAND:{const int id=LOWORD(wp);if(!populating&&((id>=202&&id<=205||id==207||id==208)&&HIWORD(wp)==CBN_SELCHANGE||(id>=700&&id<=732)&&HIWORD(wp)==BN_CLICKED)){liveField(id);return 0;}if((id==206||id==213||id==214)&&HIWORD(wp)==BN_CLICKED){const auto accepted=SendMessageW(GetParent(h),WM_APP+45,id,checked(206));message(accepted?(id==213?L"请在画面中左键拖动框选；Esc取消。":L"已请求更新NR剔除区。"):L"未能操作：请先打开画面，或清除已满的4个区域。");return 0;}if((id==200||id==201)&&HIWORD(wp)==BN_CLICKED){const bool accepted=SendMessageW(GetParent(h),WM_APP+44,id,checked(id))!=0;message(accepted?L"已请求开关；确认帧边界结果后生效。":L"总增强正在切换，请待当前事务完成。");return 0;}if(HIWORD(wp)==EN_SETFOCUS){for(auto& item:items)if(GetDlgCtrlID(item.h)==id&&item.page==page){RECT r{};GetClientRect(h,&r);int height=MulDiv(r.bottom,96,veyra::ui::layoutDpi(h))-128;if(item.y<scroll)scroll=item.y;if(item.y+item.height>scroll+height)scroll=item.y+item.height-height;arrange();break;}}if(!populating&&id>=100&&id<=111&&HIWORD(wp)==EN_CHANGE){liveField(id);return 0;}
+case WM_COMMAND:{const int id=LOWORD(wp);if(!populating&&((id>=202&&id<=205||id==207||id==208)&&HIWORD(wp)==CBN_SELCHANGE||(id>=700&&id<=732)&&HIWORD(wp)==BN_CLICKED)){liveField(id);return 0;}if((id==206||id==213||id==214)&&HIWORD(wp)==BN_CLICKED){const auto accepted=SendMessageW(GetParent(h),WM_APP+45,id,checked(206));message(accepted?(id==213?L"请在画面中左键拖动框选；Esc取消。":L"已请求更新NR剔除区。"):L"未能操作：请先打开画面，或清除已满的4个区域。");return 0;}if((id==200||id==201)&&HIWORD(wp)==BN_CLICKED){const bool accepted=SendMessageW(GetParent(h),WM_APP+44,id,checked(id))!=0;message(accepted?L"已请求开关；确认帧边界结果后生效。":L"总增强正在切换，请待当前事务完成。");return 0;}if(HIWORD(wp)==EN_SETFOCUS){for(auto& item:items)if(GetDlgCtrlID(item.h)==id&&item.page==page){RECT r{};GetClientRect(h,&r);int height=MulDiv(r.bottom,96,veyra::ui::layoutDpi(h))-128;if(item.y<scroll)scroll=item.y;if(item.y+item.height>scroll+height)scroll=item.y+item.height-height;arrange(true);break;}}if(!populating&&id>=100&&id<=111&&HIWORD(wp)==EN_CHANGE){liveField(id);return 0;}
     if(!populating&&id>=100&&id<=111&&HIWORD(wp)==EN_KILLFOCUS){populate(enhancementEnabled?controller->snapshot().desired:configuredSettings);return 0;}
     engine::EnhancementSettings s;
     if(id==211){SetFocus(body);s={};if(submit(s)){editDrafts.clear();populate(s);}message(L"已还原内建默认。");}
@@ -1846,8 +1889,8 @@ case WM_CREATE:return createSettingsWindow(h,msg,wp,lp);
 case WM_SIZE:arrange();return 0;
 case WM_ERASEBKGND:return 1;
 case WM_PAINT:{PaintBuffer paint(h);fillSurface(paint.dc,paint.rect,h);return 0;}
-case WM_VSCROLL:{switch(LOWORD(wp)){case SB_LINEUP:scroll-=40;break;case SB_LINEDOWN:scroll+=40;break;case SB_PAGEUP:scroll-=240;break;case SB_PAGEDOWN:scroll+=240;break;case SB_THUMBTRACK:{SCROLLINFO si{sizeof(si),SIF_TRACKPOS};GetScrollInfo(h,SB_VERT,&si);scroll=si.nTrackPos;break;}}arrange();return 0;}
-case WM_MOUSEWHEEL:scroll-=GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA*36;arrange();return 0;
+case WM_VSCROLL:{switch(LOWORD(wp)){case SB_LINEUP:scroll-=40;break;case SB_LINEDOWN:scroll+=40;break;case SB_PAGEUP:scroll-=240;break;case SB_PAGEDOWN:scroll+=240;break;case SB_THUMBTRACK:{SCROLLINFO si{sizeof(si),SIF_TRACKPOS};GetScrollInfo(h,SB_VERT,&si);scroll=si.nTrackPos;break;}}arrange(true);return 0;}
+case WM_MOUSEWHEEL:scroll-=GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA*36;arrange(true);return 0;
 case WM_CTLCOLORSTATIC:case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:case WM_CTLCOLORBTN:return colors(msg,wp,lp);
 case WM_COMMAND:return settingsCommand(h,msg,wp,lp);
 case WM_HSCROLL:{
@@ -1927,7 +1970,7 @@ void settingsColorScrollToTest(int id){
         const int height=MulDiv(r.bottom,96,veyra::ui::layoutDpi(window))-128;
         if(entry.y<scroll)scroll=entry.y;
         if(entry.y+entry.height>scroll+height)scroll=entry.y+entry.height-height;
-        arrange();
+        arrange(true);
         veyra::log::info("color-ui",std::format("scroll-to id={} y={} height={} viewport={} scroll={} content={}",id,entry.y,entry.height,height,scroll,colorPageContentHeight));
         return;
     }

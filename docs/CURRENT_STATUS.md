@@ -1,5 +1,15 @@
 # 当前项目状态 / Current Status
 
+## 1.4.4 test6：UI 修复重构建（2026-09-22）
+
+test5 反馈的两处 UI 问题已修复并重构建：`严格补帧节奏` 之前不在帧生成页的 final layout 里
+（保留创建坐标 `y=190`，与上下两行实测重叠 4/12 dip），现已按 8 dip 节奏独占 `y=370` 一行；
+面板滚动改为在输入消息内提交整帧重绘（`RDW_UPDATENOW`）+ 视口外行虚拟化，滚动瞬间抓屏与
+稳定帧差值 4263→0 像素。补帧调度逻辑未改。新增 `veyra_settings_layout_tests`；受影响
+UI 门槛全过。产物 `E:\项目\Veyra\test-packages\1.4.4\Veyra-1.4.4-test6`
+（`veyra.exe` SHA256 `92AC81B14AB050895B33FD2A822C179F65C4A42BD89C6C00772B89C5684D7121`）。
+**未推送、未发布。** 详见 [WORKLOG](WORKLOG.md) 顶部。
+
 ## 最新入口：统一修复计划（2026-09-22）
 
 分支 `codex/fg-independent-repair-20260922`（存档 `checkpoint/pre-fg-independent-repair-20260922`）。
