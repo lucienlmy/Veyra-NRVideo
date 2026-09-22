@@ -1348,7 +1348,14 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                     const double sourceIntervalMs=double(liveSourceInterval100ns(pkt.duration,activeSource->info().averageFps))/10000;
                     const auto baselineReady=pkt.decodedHost100ns>0?pkt.decodedHost100ns:captureArrival;
                     const bool delayEnhanced=options.nr||options.sr||options.fg;
-                    if(!liveScheduler->push([&,watch,step,timeline,captureArrival,baselineReady,delayEnhanced,activeSeekId,lineage,jobGeneration,rereadCached,sourceIntervalMs,flow=frameFlow](int64_t now)->LiveGpuScheduler::Step{
+                    // Captures are explicit on purpose (sweep 2026-09-22 B1): this step runs
+                    // from the scheduler queue for up to two source frames, so every
+                    // by-reference capture below must outlive the scheduler. The guard
+                    // that destroys the scheduler is declared immediately before the run
+                    // loop, so all of these are declared above it. Adding a reference to a
+                    // local declared after that guard is now a compile error instead of a
+                    // silent dangling reference.
+                    if(!liveScheduler->push([this,&anchor,&anchorMs,&captureSource,&fedFsrGenerated,&fedFsrPresented,&fedXessGenerated,&fedXessPresented,&lastFilePresentLateness,&lastFilePresentedMs,&liveSubmissions,&presentationCompletedReal,&remote,&seekDecoded,&seekStarted,&audio,&audioPipe,&audioStarted,&cadence,&ctx,&fileAudioAlignPending,&fileAwaitingVideo,&fileInputEnded,&frameFlow,&graph,&host100ns,&isCapture,&isImage,&livePresent,&liveScheduler,&nextFgDeadlineLog,&nowMs,&options,&pendingCompletions,&physicalCapture,&presentEntryDeviation,&presentReturnDeviation,&presentationEffective,&presentationGeneration,&presentationSkippedGenerated,&presenter,&ring,&runSessionId,&seekPreviewPending,&traceFrame,&traceSubframes,watch,step,timeline,captureArrival,baselineReady,delayEnhanced,activeSeekId,lineage,jobGeneration,rereadCached,sourceIntervalMs,flow=frameFlow](int64_t now)->LiveGpuScheduler::Step{
                         using State=LiveGpuScheduler::State;auto& batch=watch->output;auto& s=*step;
                         auto updatePending=[&](LiveStepState*){
                             unsigned left=0;for(unsigned i=s.next;i<batch.batch.count;++i)if(batch.batch.frames[i].kind!=pipeline::FrameKind::Generated||batch.batch.frames[i].validity==pipeline::GenerationValidity::Valid)++left;

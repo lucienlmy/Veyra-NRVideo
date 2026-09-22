@@ -1,5 +1,18 @@
 # Veyra 工作记录
 
+## 2026-09-22 统一修复第 9 批（收口遗留三项）
+
+标签 `checkpoint/plan-b9-done-20260922`。B1 完整版改用**显式捕获**落地：编译器枚举出
+step lambda 实际引用的 45 个局部量并逐个列出，新增引用从此是编译错误而非静默悬垂；
+与搬进结构体相比语义零变化、风险为零。延迟 3b 完整版（直写 upload 堆）**实测后判定不做**：
+本机 4K NV12 写 UPLOAD 堆 0.433 ms，并不比写普通内存（0.449 ms）慢，能省的只有这一次
+0.43 ms，占无 FG 端到端 10.8 ms 的 4%，而代价是把 D3D12 所有权打进采集层并重做全部
+实卡格式回归；证据留 `b9/upload-bench/`。延迟 1 实测：pro 与 fullscreen 交替各 2 次，
+DLSS 2X 逐项相同（absLatenessP95 0.75/0.77 对 0.77/0.77），**专业模式无额外延迟**；
+Composed 与 independent flip 的确证仍需 PresentMon。门槛全过，实卡 FG 40.03 ms /
+无 FG 10.84 ms（第 8 批 42.5 / 11.56），dropped 0。运行入口 exe SHA256 前 16 位
+`E8326689DC1510AF`。详见 [执行记录 §3d](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+
 ## 2026-09-22 统一修复第 8 批（收尾）与 XeSS 复跑排查
 
 存档 `checkpoint/plan-b8-pre-20260922`，提交 `8a1bb0a`，标签 `checkpoint/plan-b8-done-20260922`。

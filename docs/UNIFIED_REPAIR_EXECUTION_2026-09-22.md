@@ -5,8 +5,8 @@
 计划见 [统一修复计划](UNIFIED_REPAIR_PLAN_2026-09-22.md)。本机 RTX 5070、100 Hz
 显示器；所有数字为 30 s 短测或单元/合同测试，长测、实卡、多显示器、HDR 屏、肉眼画质
 由用户验收。运行入口 `E:/项目/Veyra/tests/fg-independent-repair-20260922/app/veyra.exe`
-（第 8 批后 SHA256 前 16 位 `FF40BCC80A3667A0`，staging，运行库为 junction，非便携包）。
-产物：`E:/项目/Veyra/tests/fg-independent-repair-20260922/{b12,b3456,b7,b8}/`，构建日志
+（第 9 批后 SHA256 前 16 位 `E8326689DC1510AF`，staging，运行库为 junction，非便携包）。
+产物：`E:/项目/Veyra/tests/fg-independent-repair-20260922/{b12,b3456,b7,b8,b9}/`，构建日志
 `E:/项目/Veyra/logs/fg-independent-repair-20260922/build-b*.log`。
 
 ## 1. 逐项状态
@@ -188,6 +188,83 @@ NVML GPU 均值与 `gpuReadyP95`，并对比 `VEYRA_DISABLE_XESS_SOURCE_TIMING=1
 原始数据：`b8/ab-xess-rerun{1,2}`、`b8/bisect-{b6,b8}-{1,2}`，日志
 `logs/fg-independent-repair-20260922/{ab-xess-rerun*,bisect-*}.log`。
 
+## 3d. 第 9 批（收口三个遗留项，标签 `checkpoint/plan-b9-done-20260922`）
+
+### B1 完整版：step lambda 捕获显式化（已修）
+
+计划原文要求"把 step 需要的状态收进 `LiveStepContext` 结构体"。实际做法改为**把默认
+引用捕获 `[&]` 换成逐个列出的显式捕获**，理由是两者达到同一个目的（让新增引用变成编译
+错误），但显式捕获与 `[&]` 语义完全相同、零行为风险，而搬进结构体要重排一个约 400 行
+lambda 触及的全部局部量，属于高风险重构且无运行时收益。
+
+用编译器枚举出该 lambda 实际引用的局部量：第一轮 31 个（MSVC 到 100 条错误即 C1003
+截断），补齐后第二轮再报 14 个，合计 **45 个按引用捕获** + 原有 12 个按值捕获。全部列出
+后编译通过（`logs/.../b1-probe{,2,3}.log`）。现在任何人在调度器守卫之后新声明局部并在
+step 中引用，会直接编译失败，而不是静默悬垂——这正是清扫表 B1 要求的"锁定声明顺序"。
+
+### 延迟 3b 完整版：直写 upload 堆（**实测后不做**）
+
+先量化收益上限再决定。本机 RTX5070 实测（源码与结果见
+`b9/upload-bench/{up.cpp,result.txt}`，4K NV12 = 11.87 MB，60 次取中位数）：
+
+| 拷贝 | 中位耗时 |
+| --- | ---: |
+| memcpy → UPLOAD 堆（每平面一次，第 8 批后的形态） | 0.433 ms |
+| memcpy → UPLOAD 堆（逐行，第 8 批前的形态） | 0.437 ms |
+| memcpy → 普通系统内存（对照） | 0.449 ms |
+
+关键结论：**写 UPLOAD 堆并不比写普通内存慢**（write-combined 顺序写满速），所以图内
+那次 AVFrame→upload 拷贝只值 0.43 ms。实卡日志里回调那次拷贝是 0.95 ms
+（`capture-callback entryToCopiedMs≈0.95`，12.44 MB），慢一倍是因为**读**驱动缓冲
+才是瓶颈，不是写。
+
+因此无论走哪条路——让 mailbox 帧直接落在 upload 堆，还是扣住 `IMediaSample` 到 owner
+线程再拷一次——省掉的都只是这 0.43 ms 的一次，占无 FG 端到端 10.8 ms 的 **4%**；有 FG
+时相位等待主导（第 7 批已测），收益接近 0。代价是把 D3D12 资源所有权与 fence 退休打进
+`src/source`（目前该层不依赖 D3D12），并要在 NV12/P010/YUY2/RGB24、重连、改分辨率和
+D3D12VA 硬解各条路径上重新做实卡回归。**收益 4%、风险覆盖整条实卡热路径，判定不做**，
+证据留档。真要再压延迟，方向是 GPU 侧（无 FG 时 `gpuReadyP95` 7.8 ms 占 72%），不是这次拷贝。
+
+### 延迟 1：专业模式是否比全屏多延迟（已测，无差异）
+
+同一 exe、同一片源，pro（窗口专业模式）与 fullscreen 交替各跑 2 次 30 s
+（`b9/view-ab/`，日志 `logs/.../view-ab.log`）：
+
+| 工况 | 视图 | 帧 | presents/s | displayed/s | notDisplayed/s | absLatenessP95 | presentCpuP95 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| DLSS 2X | pro | 1657 / 1666 | 120.4 / 120.5 | 100.4 / 100.5 | 19.96 / 19.91 | 0.75 / 0.77 | 0.30 / 0.35 |
+| DLSS 2X | fullscreen | 1666 / 1662 | 120.7 / 120.5 | 100.7 / 100.5 | 20.0 / 19.98 | 0.77 / 0.77 | 0.32 / 0.35 |
+| XeSS 4X | pro | 1661 / 1444 | 60.6 / 60.7 | 101.1 / 101.2 | 0 / 0 | 1.48 / 8.67 | 1.01 / 6.19 |
+| XeSS 4X | fullscreen | 1653 / 1661 | 60.6 / 60.5 | 101.0 / 100.9 | 0 / 0 | 1.52 / 1.44 | 0.92 / 0.86 |
+
+DLSS 2X 两种视图逐项相同（差异 ≤0.02 ms），100 Hz 下 `displayed`/`refreshes` 都是
+100.5/s，`refreshesWithoutNewFrame=0`。**专业模式没有可测的额外延迟。** XeSS 4X 那一次
+pro 8.67 ms 是 §3c.1 记录的提供方双稳态坏时段（同组 fullscreen 1.44，另一次 pro 1.48），
+不是视图差异。**边界**：DXGI `GetFrameStatistics` 在两种视图下返回相同数值，这**不能**
+单独证明走的是 independent flip；要区分 Composed 与 independent flip 仍需 PresentMon
+权限。本条只结论"用户可见延迟与显示节奏无差异"。
+
+### 第 9 批门槛（`b9/`）
+
+| 测试 | 结果 |
+| --- | --- |
+| `veyra_presentation_worker_tests` | 127 PASS |
+| `veyra_repair_contract_tests` | 205 checks 0 failures |
+| `veyra_capture_audio_tests` | exit 0 |
+| `veyra_fg_presentation_tests` | exit 0，D3D12 errors=0，ERROR 0 行 |
+| `veyra_fg_settings_tests backend-switch` | 16 PASS，0 ERROR |
+| `veyra_fg_admission_tests dlss 4` | pass，debugErrors=0 |
+| 实卡 rate test（MCS 4K--T800 4K30） | PASS callback=29.968 reads=181 monotonic |
+| 实卡 25 s NR+DLSS4X | `callbackToPresentReturn` P95 **40.03** ms（第 8 批 42.5），dropped 0，expired 0，0 ERROR |
+| 实卡 25 s 无 FG | P95 **10.84** ms（第 8 批 11.56），`gpuReadyP95` 7.82，dropped 0，0 ERROR |
+| `veyra_capture_compressed_tests` | SKIP（仍缺 `loop/local/fixed_clips/test_h264_1080p.mp4`） |
+
+两个实卡数字都略好于第 8 批，属同向噪声范围，**不单独计为收益**，只证明 B1 显式捕获没有
+引入回归。另：`tools/fsr_probe`、`tools/fsr_upscale_probe` 在 worktree 里用
+`../../third_party_local/...` 相对路径找 FidelityFX 头文件，worktree 下必然找不到，
+`ninja`（全目标）因此失败。这是既有问题、与本轮无关，产品目标 `veyra` 与全部测试目标
+单独构建均通过；未修，记录待办。
+
 ## 4. 未做项的原因与下一步
 
 - **C3/C4/延迟 3b（采集三缓冲、锁外复制、直写 upload 堆）**：需要重构 mailbox 所有权
@@ -199,7 +276,10 @@ NVML GPU 均值与 `gpuReadyP95`，并对比 `VEYRA_DISABLE_XESS_SOURCE_TIMING=1
 - **延迟 1（专业模式 Composed 测量）**：需 PresentMon 权限或用户实屏，请用户在长测时
   对比全屏与专业模式的 `display-stats`。
 - **第 7/8 批已补做** C3、C4、延迟 2、延迟 3b（有界）、B5、C7、A4/A5、E5、E6、C9、B1（有界）。
-- **仍未做**：直写 upload 堆（延迟 3b 完整版）、step lambda 状态收敛（B1 完整版）、延迟 1（专业模式 Composed 测量）。
+- **第 9 批收口**：B1 完整版以显式捕获实现；延迟 3b 完整版实测收益 4% 后判定不做（见 §3d）；
+  延迟 1 实测 pro 与 fullscreen 无差异。
+- **仍未做**：Composed vs independent flip 的确证（需 PresentMon 权限）；
+  `tools/fsr*_probe` 在 worktree 下的相对路径失效。
 
 ## 5. 撤回记录
 

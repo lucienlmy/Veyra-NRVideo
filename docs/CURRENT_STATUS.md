@@ -5,8 +5,9 @@
 分支 `codex/fg-independent-repair-20260922`（存档 `checkpoint/pre-fg-independent-repair-20260922`）。
 已实施并短测的 FG 修复见 [执行记录](FG_INDEPENDENT_REPAIR_EXECUTION_2026-09-22.md)：
 XeSS 真实源周期提示、有界跳帧保留历史、DLSS 超预算对改 2X 组、显示帧统计；
-X2/X3 已撤回。[统一修复计划](UNIFIED_REPAIR_PLAN_2026-09-22.md) 第 1–8 批已实施（最终 `8a1bb0a`，标签
-`checkpoint/plan-b8-done-20260922`），结果、XeSS 复跑排查（时段差异，非回归）与未做项见
+X2/X3 已撤回。[统一修复计划](UNIFIED_REPAIR_PLAN_2026-09-22.md) 第 1–9 批已实施（标签
+`checkpoint/plan-b9-done-20260922`），结果、XeSS 复跑排查（时段差异，非回归）、
+直写 upload 堆的实测否决与专业模式延迟实测见
 [执行记录](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)；
 依据为 [全软件清扫](WHOLE_SOFTWARE_SWEEP_2026-09-22.md) 与
 [采集延迟复查](CAPTURE_LATENCY_REVIEW_2026-09-22.md)。运行入口
