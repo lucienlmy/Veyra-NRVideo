@@ -1,5 +1,26 @@
 # Veyra 工作记录
 
+## 2026-09-22 1.4.4 正式发布到 GitHub
+
+用户授权发布后完成：推送 `main`（`6851c27`）+ 签注标签 `v1.4.4`（`9e21d18 → 6851c27`），
+发布 https://github.com/Likely7/Veyra-NRVideo/releases/tag/v1.4.4 （发布 ID `393860692`）。
+资产 4 个：便携包 `Veyra-1.4.4-win64-portable.zip`（472478966 字节，SHA256
+`BFF5149B55F8665FEBEAECEEE421956DF72370FA56515A013EE6ABBD45B8878B`）、对应源码
+`Veyra-1.4.4-source.zip`（215437386 字节，SHA256
+`7D3A8EFED76422EAB536D714221F579F1478921B927149FBB5ADFFA8635C53BA`，记录提交 `6851c27`）
+及两个 `.sha256`。发布 EXE SHA256 `92AC81B14AB050895B33FD2A822C179F65C4A42BD89C6C00772B89C5684D7121`，
+与用户验收的 test6 一致。
+
+便携冒烟 7/7 PASS（`tests/release-144-20260922/portable-smoke-final/result.json`，`exeHash` 与包内一致）；
+受影响门槛（设置面板布局新回归、滑条还原、控件绘制、UI 合同 384、修复合同 205）全过。
+首次冒烟误用 4K 素材导致 `video-sr-nr-fg` 断言失败，原因是 4K 输入下超分被旁路，改用标准 1080p
+夹具后通过；失败产物保留在 `tmp/portable-smoke-4k-input-attempt/`，不当作产品回归。
+
+README / README_EN 已按用户要求精简为只讲 1.4.4，老版本内容删除，细节指向 Release；
+交流群二维码换为 `docs/images/1.4.4/community-group.png`（7 天内有效），赞助码未动，
+Release 正文两个固定区块各 `width=220`，两个图片 URL 与 4 个下载 URL 均 HTTP 200。
+完整执行记录见 [1.4.4 发布执行记录](RELEASE_1.4.4_EXECUTION.md)。
+
 ## 2026-09-22 1.4.4 test6：严格补帧节奏行重排、面板滚动提交重绘
 
 用户反馈 test5 两处 UI 问题：`严格补帧节奏` 与其他控件黏在一起/重叠；专业模式快速滚动出现白影、

@@ -1,5 +1,15 @@
 # 当前项目状态 / Current Status
 
+## 正式版 1.4.4 已发布（2026-09-22）
+
+`v1.4.4` 已推送到 GitHub 并作为 latest 发布：源码提交 `6851c27`，
+https://github.com/Likely7/Veyra-NRVideo/releases/tag/v1.4.4 。
+便携包 472478966 字节 / SHA256 `BFF5149B55F8665FEBEAECEEE421956DF72370FA56515A013EE6ABBD45B8878B`，
+对应源码 215437386 字节 / SHA256 `7D3A8EFED76422EAB536D714221F579F1478921B927149FBB5ADFFA8635C53BA`；
+发布 EXE SHA256 `92AC81B14AB050895B33FD2A822C179F65C4A42BD89C6C00772B89C5684D7121`，
+与用户已验收的 test6 包一致。便携冒烟 7/7 PASS，受影响 UI 门槛全过；README 已精简为只讲最新版。
+完整步骤、失败记录与遗留见 [1.4.4 发布执行记录](RELEASE_1.4.4_EXECUTION.md)。
+
 ## 1.4.4 test6：UI 修复重构建（2026-09-22）
 
 test5 反馈的两处 UI 问题已修复并重构建：`严格补帧节奏` 之前不在帧生成页的 final layout 里
