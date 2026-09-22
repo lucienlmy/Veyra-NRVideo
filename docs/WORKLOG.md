@@ -1,5 +1,20 @@
 # Veyra 工作记录
 
+## 2026-09-22 DLSS/XeSS 补帧独立修复（隔离分支，短测）
+
+分支 `codex/fg-independent-repair-20260922`，存档 `checkpoint/pre-fg-independent-repair-20260922`。
+按独立复核方案实施并短测：X1 XeSS 真实源周期 frameRenderTime 转正；F2 有界预览跳帧
+（≤2 帧）不再清 NR/XeSS/DLSS 历史；F3 DLSS 超预算对改为可呈现的 2X 组（harness
+5/1/5 交替不重置验证位置正确）；F4 记录显示器刷新率与 GetFrameStatistics 差分。
+X2（XeLL 关低延迟）被提供方 -15 拒绝，撤回；X3（提供方 Present 移到辅助线程）
+使源率 51→24/s、提供方周期估计 16→26 ms，已从代码删除。
+真超分+NR+XeSS4 短测：源 50.8/s、生成 152/s、历史重置 177→1、原帧间隔 p95 29→22 ms，
+组内 4.3 ms；同会话旧构建 41.9/s、8.2 ms。显示端 100 Hz 上应用提交全部被扫描出。
+门槛：scheduler 单测 127 PASS，FG 呈现测试 D3D12 errors=0，backend-switch 16 PASS。
+完整数字、撤回原因与边界见 [执行记录](FG_INDEPENDENT_REPAIR_EXECUTION_2026-09-22.md)；
+产物在 `E:/项目/Veyra/{tests,build,logs,tmp}/fg-independent-repair-20260922/`。
+长测、其他显卡、采集卡与肉眼画质由用户验收；未打包、未合并、未推送、未发布。
+
 ## 2026-09-22 DLSS/XeSS 补帧独立复核（只出方案）
 
 独立于此前结论重读源码、六组 XeSS 4X 对照日志/trace 与有界修复 DLSS 矩阵。

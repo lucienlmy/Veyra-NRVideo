@@ -18,6 +18,7 @@ struct FgTestArgs {
     std::wstring captureDir;
     bool capabilityOnly = false; // --fg-cap: query + honest JSON, no create
     bool planarSix = false; // Direct NGX diagnostic; no player/EnhanceGraph.
+    bool alternateGroups = false; // planarSix with multiFrameCount 1/5 alternating, no reset.
 };
 
 // Runs the full FG truth test and writes JSON to args.jsonFile.

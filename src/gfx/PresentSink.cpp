@@ -236,7 +236,7 @@ bool PresentSink::initialize(ID3D12Device* device, ID3D12CommandQueue* queue,
         for(auto& b:backBuffers_)b.Reset();
         swapChain_.Reset();
         xess_=std::make_unique<XessPresenter>();
-        if(!xess_->initialize(device,queue,factory_.Get(),hwnd_,scd,swapChain_.GetAddressOf(),desc.fgMultiplier)){
+        if(!xess_->initialize(device,queue,factory_.Get(),hwnd_,scd,swapChain_.GetAddressOf(),desc.fgMultiplier,desc.xessLowLatencySleep)){
             // XeSS is an optional experimental presenter. A missing or
             // incompatible local runtime must not prevent basic playback.
             log::warn("present", "XeSS FG initialization failed; falling back to native presentation");
@@ -300,6 +300,9 @@ bool PresentSink::initialize(ID3D12Device* device, ID3D12CommandQueue* queue,
         if(!configurePacing(false,desc.vsync))log::warn("pacing","baseline latency configuration failed; playback remains available");
     }
     tearingSupported_=tearingSupported_&&(actual.Flags&DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)!=0;
+    displayRefreshHz_=displayRefreshFps(hwnd_);
+    frameStatisticsBaseValid_=false;
+    log::info("display-refresh",std::format("monitor refresh={:.3f} Hz at swapchain creation (0 = unknown); submissions above this rate cannot all be scanned out",displayRefreshHz_));
     log::info("present", std::format("present-sink: window {}x{} swapEffect={} buffers=3 vsync={} tearing={} captureCompatible={} (capture not verified)",
         width_, height_, actual.SwapEffect==DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL?"flip-sequential":"flip-discard", desc_.vsync ? 1 : 0, tearingSupported_ ? 1 : 0, desc.captureCompatible));
     return true;
@@ -423,6 +426,27 @@ bool PresentSink::present(Status& status)
     return false;
 }
 
+PresentSink::FrameStatisticsDelta PresentSink::sampleFrameStatistics(){
+    FrameStatisticsDelta delta;
+    if(!swapChain_)return delta;
+    DXGI_FRAME_STATISTICS stats{};
+    delta.result=swapChain_->GetFrameStatistics(&stats);
+    // DXGI_ERROR_FRAME_STATISTICS_DISJOINT: mode change or first frames; a
+    // proxy swapchain may also refuse the query. Restart the baseline.
+    if(FAILED(delta.result)){frameStatisticsBaseValid_=false;return delta;}
+    if(frameStatisticsBaseValid_){
+        delta.supported=true;
+        delta.presents=presentCount_-frameStatisticsBasePresents_;
+        delta.displayed=uint64_t(stats.PresentRefreshCount-frameStatisticsBasePresentRefresh_);
+        delta.refreshes=uint64_t(stats.SyncRefreshCount-frameStatisticsBaseSyncRefresh_);
+    }
+    frameStatisticsBaseValid_=true;
+    frameStatisticsBasePresents_=presentCount_;
+    frameStatisticsBasePresentRefresh_=stats.PresentRefreshCount;
+    frameStatisticsBaseSyncRefresh_=stats.SyncRefreshCount;
+    return delta;
+}
+
 bool PresentSink::configurePacing(bool enabled,bool vsync){
     // XeSS owns pacing, but its proxy accepts DXGI VSync independently.
     // Do not install another latency waiter on the provider swap chain.
@@ -491,6 +515,7 @@ void PresentSink::resize(uint32_t width, uint32_t height)
     bufferExtentW_ = width_;
     bufferExtentH_ = height_;
     pendingResize_ = true;
+    frameStatisticsBaseValid_=false;
     log::info("present", std::format("present-sink: resized to {}x{}", width_, height_));
 }
 

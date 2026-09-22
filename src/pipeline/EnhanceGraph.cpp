@@ -1933,13 +1933,19 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
     const bool reseedRejected=decision==FgDecision::Seed;
     out.fgBudgetSeed=reseedRejected;
     if(reseedRejected)resetFg=true;
+    // Reduced groups only make sense with valid history; on a reset the
+    // seed path already runs a single evaluation.
+    const bool reduced=decision==FgDecision::Reduced&&!resetFg;
+    out.fgReduced=reduced;
     // A reset has no usable A/B pair. Seed one complete 2X evaluation group;
     // all later subframes would repeat reset work and cannot be presented.
-    const uint32_t fgCalls=resetFg?1:fgMultiplier-1;
+    const uint32_t fgCalls=(resetFg||reduced)?1:fgMultiplier-1;
+    const unsigned outputMultiplier=reduced?2u:fgMultiplier;
     if(runFg&&resetFg){
         if(reseedRejected)out.fgSkippedBeforeEval=out.fgCandidates-fgCalls;
         else out.fgSkippedForReset=out.fgCandidates-fgCalls;
     }
+    if(reduced)out.fgSkippedBeforeEval=out.fgCandidates-fgCalls;
     out.fgRecovery=runFg&&(fgHistorySkipped_||reseedRejected);
     if(fgBackendAvailable&&!runFg){out.fgSkippedBeforeEval=out.fgCandidates;fgHistorySkipped_=true;}
     if(!runFg)gpuTimer_.resolve(list);
@@ -1998,7 +2004,7 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
         if(out.hasGenerated){
             ++metrics_.fgSubmittedCandidates;
             BatchFrame f;f.identity=out.batch.identity;f.kind=FrameKind::Generated;f.validity=GenerationValidity::Pending;f.subframe=sub;
-            f.pts100ns=FrameBatch::interpolate(out.batch.a100ns,out.batch.b100ns,sub,fgMultiplier);
+            f.pts100ns=FrameBatch::interpolate(out.batch.a100ns,out.batch.b100ns,sub,outputMultiplier);
             f.lease=std::make_shared<FrameLease>();f.lease->texture=genFrame_[generatedSlot];f.lease->slot=generatedSlot;f.lease->readyFence=out.genFenceValue;f.lease->readyFenceObject=out.genFenceObject;generatedLeases_[generatedSlot]=f.lease;out.batch.append(std::move(f));
         }
       }

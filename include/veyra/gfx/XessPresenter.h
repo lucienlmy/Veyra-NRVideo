@@ -12,7 +12,11 @@ public:
     ~XessPresenter();
     // fgMultiplier is the requested output multiplier (2 = one generated frame,
     // 3 = two, 4 = three). >2 requires the audited provider unlock.
-    bool initialize(ID3D12Device*,ID3D12CommandQueue*,IDXGIFactory2*,HWND,const DXGI_SWAP_CHAIN_DESC1&,IDXGISwapChain3**,uint32_t fgMultiplier=1);
+    // lowLatencySleep: XeLL bLowLatencyMode. File playback already paces its
+    // inputs by the media clock (an application frame limiter, which Intel's
+    // XeLL guide says should not run together with XeLL sleep); keep the XeLL
+    // markers and sleep call but let pass-through mode make the sleep trivial.
+    bool initialize(ID3D12Device*,ID3D12CommandQueue*,IDXGIFactory2*,HWND,const DXGI_SWAP_CHAIN_DESC1&,IDXGISwapChain3**,uint32_t fgMultiplier=1,bool lowLatencySleep=true);
     uint32_t beginInput();
     bool beginProcessing(uint32_t frameId);
     bool endProcessing(uint32_t frameId);

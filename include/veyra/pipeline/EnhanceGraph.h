@@ -153,7 +153,7 @@ public:
     struct FrameOutputs {
         FrameBatch batch;
         uint32_t fgCandidates=0,fgEvaluated=0,fgSkippedBeforeEval=0,fgSkippedForReset=0;
-        bool historyReset=false,fgRecovery=false,fgBudgetSeed=false;
+        bool historyReset=false,fgRecovery=false,fgBudgetSeed=false,fgReduced=false;
         ResetReason detectedReset=ResetReason::None;
         bool contentDuplicate=false;int measuredContentRate=0;
         double ptsMs = 0.0;
@@ -177,7 +177,12 @@ public:
     // does not own the demuxer). `reset` marks the first frame of a new
     // temporal epoch (open/seek/...): NVOF/FG history is not consumed.
     // Returns false on hard failure (run verdict must FAIL).
-    enum class FgDecision { Skip, Evaluate, Seed };
+    // Reduced: the full group does not fit its deadline but one midpoint
+    // frame does. Run a presentable 2X group WITHOUT resetting history
+    // (fg_harness --fg-planar-alt verified 5/1/5 alternation keeps correct
+    // interpolation positions). The pair keeps its true A/B PTS; only the
+    // number of outputs changes, and it is reported as previewFgMultiplier.
+    enum class FgDecision { Skip, Evaluate, Seed, Reduced };
     using FgAdmission=std::function<FgDecision(const FrameBatch&,bool warmingHistory)>;
     // `hardwareSurface` carries the decoded texture for paths whose surface
     // does not travel inside the AVFrame (D3D11VA). It must be provided exactly

@@ -19,7 +19,7 @@ namespace {
 void printUsage()
 {
     std::fprintf(stderr,
-        "usage: veyra_fg_harness --fg-cap | --fg-test | --fg-planar6 | --audio-test\n"
+        "usage: veyra_fg_harness --fg-cap | --fg-test | --fg-planar6 | --fg-planar-alt | --audio-test\n"
         "  [--runtime-dir DIR] [--run-id ID] [--log-file FILE] [--json-file FILE]\n"
         "  [--capture-dir DIR]\n");
 }
@@ -31,7 +31,7 @@ int main(int argc, char** argv)
     using namespace veyra::harness;
 
     bool doCap = false, doFgTest = false, doAudio = false;
-    bool planarSix = false;
+    bool planarSix = false, alternateGroups = false;
     std::wstring runtimeDir;
     std::string runId = "fg-harness";
     std::wstring logFile, jsonFile, captureDir;
@@ -41,6 +41,7 @@ int main(int argc, char** argv)
         if (arg == "--fg-cap") doCap = true;
         else if (arg == "--fg-test") doFgTest = true;
         else if (arg == "--fg-planar6") { doFgTest = true; planarSix = true; }
+        else if (arg == "--fg-planar-alt") { doFgTest = true; planarSix = true; alternateGroups = true; }
         else if (arg == "--audio-test") doAudio = true;
         else if (arg == "--run-id" && i + 1 < argc) runId = argv[++i];
         else if (arg == "--runtime-dir" && i + 1 < argc) {
@@ -84,6 +85,7 @@ int main(int argc, char** argv)
         args.jsonFile = jsonFile;
         args.captureDir = captureDir;
         args.planarSix = planarSix;
+        args.alternateGroups = alternateGroups;
         return runFgTest(args);
     }
     AudioTestArgs args{};

@@ -15,9 +15,17 @@ namespace veyra::engine {
 class VideoPresenter {
 public:
     ~VideoPresenter(){close();}
-    bool open(gfx::D3D12DeviceContext&, HWND, pipeline::EnhanceGraph&, bool captureCompatible=false);
+    // mediaClockPaced: the owner already waits on a media clock before each
+    // source (file playback). Retained for diagnostics; XeLL low latency must
+    // stay enabled or the provider refuses generation (result -15).
+    bool open(gfx::D3D12DeviceContext&, HWND, pipeline::EnhanceGraph&, bool captureCompatible=false, bool mediaClockPaced=false);
     bool present(gfx::D3D12DeviceContext&,gfx::CommandSlotRing&,pipeline::EnhanceGraph&,unsigned slot,bool generated,bool referencesValid=true,int comparison=0,bool baseReference=false,float split=.5f,pipeline::FrameIdentity identity={},PreviewView view={},int64_t sourcePts100ns=-1);
     void close();
+    // Present-sink providers (XeSS/FSR) block inside Present while pacing
+    // their generated frames. A helper-thread Present was tried on
+    // 2026-09-22 (X3): the provider then estimated its period from the
+    // longer hand-off intervals and the source rate fell 51 -> 24/s at 44%
+    // GPU. The synchronous call stays; see FG_INDEPENDENT_REPAIR_EXECUTION.
     bool beginSourceInput();
     bool beginSourceProcessing();
     void sourceProcessed(pipeline::FrameIdentity);

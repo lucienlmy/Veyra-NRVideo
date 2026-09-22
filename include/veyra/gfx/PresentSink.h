@@ -53,6 +53,9 @@ public:
         // Requested frame-generation multiplier (2 = one generated frame).
         // Only the XeSS path consumes it today; >2 requires the provider unlock.
         uint32_t fgMultiplier = 1;
+        // XeLL low-latency sleep on the source-input thread. Must stay true
+        // for generation (provider returns -15 otherwise); diagnostic toggle.
+        bool xessLowLatencySleep = true;
         // Probe runs create their own window class name per process.
         std::wstring title = L"Veyra";
         HWND targetWindow = nullptr; // borrowed UI-owned child HWND; never destroyed by sink
@@ -79,6 +82,20 @@ public:
         HRESULT result=S_OK;
     };
     const PresentTiming& lastPresentTiming()const{return presentTiming_;}
+    // Display-side evidence: DXGI frame statistics deltas since the previous
+    // sample. presents = successful Present calls in the window; refreshes =
+    // vertical refreshes elapsed (SyncRefreshCount); displayed = refreshes at
+    // which a NEW presented frame was scanned out (PresentRefreshCount delta).
+    // presents - displayed = submissions that never reached the screen (with
+    // tearing/vsync off, dropped by flip). Unsupported (proxy swapchain or
+    // pre-first-present) leaves supported=false; nothing is invented.
+    struct FrameStatisticsDelta {
+        bool supported=false;
+        uint64_t presents=0,displayed=0,refreshes=0;
+        HRESULT result=S_OK;
+    };
+    FrameStatisticsDelta sampleFrameStatistics();
+    double displayRefreshHz()const{return displayRefreshHz_;}
     bool configurePacing(bool enabled,bool vsync);
     bool presentationReady();
     bool pacingActive()const{return pacing_;}
@@ -141,6 +158,10 @@ private:
     HANDLE latencyHandle_=nullptr;
     bool pacing_=false,capacityAcquired_=false;
     PresentTiming presentTiming_{};
+    double displayRefreshHz_=0;
+    bool frameStatisticsBaseValid_=false;
+    uint64_t frameStatisticsBasePresents_=0;
+    UINT frameStatisticsBasePresentRefresh_=0,frameStatisticsBaseSyncRefresh_=0;
 };
 
 } // namespace veyra::gfx

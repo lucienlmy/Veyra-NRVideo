@@ -14,6 +14,11 @@
 | NVOF 与 Video SR 重叠 | 可执行入口已删除 | 未接受的历史候选；仅保留失败结论，避免重复尝试 |
 | XeSS 真实源时间提示 | 代码仍在，VEYRA_TEST_XESS_SOURCE_TIMING 默认关闭 | 吞吐改善有重复证据，完整节奏、图像对应验收未完成，不能称修复完成 |
 | XeSS fence / deadline 只读诊断 | 保留，追踪按诊断开关启用 | 用于区分依赖等待与截止时间等待，不是调度优化 |
+| XeSS 文件播放 XeLL `bLowLatencyMode=0`（2026-09-22 X2） | 已撤回，仅 `VEYRA_TEST_XESS_LOW_LATENCY=0` 诊断开关 | 提供方 `SetEnabled` 返回 -15，补帧被拒；Intel 指南要求 XeLL 启用。不要再试 |
+| XeSS/FSR 提供方 Present 移到辅助线程（2026-09-22 X3，单飞、fence 合同不变） | 代码已删除 | 真超分+NR+4X 源 51.0→23.8/s，GPU 95→44%，提供方周期估计 15.9→26.3 ms，组内 4.3→9.9 ms。owner 阻塞恰好锁定了源提交与提供方节奏；不改写提供方周期估计就解耦线程是负优化 |
+| XeSS 真实源 PTS 间隔作 frameRenderTime（X1，已转正） | 默认开启，`VEYRA_DISABLE_XESS_SOURCE_TIMING=1` 对照 | 组内间隔 4.96→4.27 ms，Present 阻塞 p50 17.2→15.0 ms，源率不变 |
+| 有界预览跳帧保留历史（F2） | 默认开启，`VEYRA_TEST_PREVIEW_SKIP_RESET=1` 对照 | 重置 177→1，原帧间隔 p95 26.8→22.2 ms，源率 53.5→50.8/s；肉眼待验收 |
+| DLSS 超预算对改 2X 组（F3） | 默认开启，`VEYRA_TEST_FG_NO_REDUCED=1` 对照 | 见执行记录 §4.2 |
 | 全局取消 DLSS admission / 无限制接纳晚到生成 | 可执行 A/B 入口已删除 | 既有采集测试约204.10降至184.76次提交/秒、过期和输入丢失增加；文件测试也严重回退，正式路径固定使用 admission |
 
 核查 src/include/tests 未发现前六项临时环境变量入口。
@@ -38,6 +43,9 @@
 5. 记录源码存档、输出目录、对照结果和删除状态。不得把保留的诊断统计当优化收益。
 
 ## 原始证据
+
+- [独立修复执行记录 2026-09-22](FG_INDEPENDENT_REPAIR_EXECUTION_2026-09-22.md)
+- [独立复核与方案 2026-09-22](FG_INDEPENDENT_REVIEW_2026-09-22.md)
 
 - [非 NR 实验与回退](FG_NON_NR_EXPERIMENTS_2026-09-20.md)
 - [本轮 XeSS 实验、候选与逐次证据](FG_STABILITY_PROGRESS_2026-09-21.md)

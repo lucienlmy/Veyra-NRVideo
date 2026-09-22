@@ -77,6 +77,18 @@ int main(){
         check(prefix.canAdmit(10000000,10010000,0,0,true)&&prefix.recovering(),"seed affordability query cannot falsely complete recovery");
     }
     {
+        // Reduced (2X) group: base 8 ms + one measured first interpolation
+        // 3 ms must reach the pair midpoint; the full group (base + 10) need not.
+        veyra::engine::FgRecoveryBudget reduced;
+        reduced.complete(18,true,false,10000000,10);
+        check(!reduced.admitFile(10000000,10100000,10150000,27778,0,0,3,false,0),"full group over budget for the last output");
+        check(reduced.canAdmitReduced(10000000,10150000,83333,0,0,3,0),"midpoint reachable with base plus one interpolation");
+        check(!reduced.canAdmitReduced(10000000,10020000,83333,0,0,3,0),"midpoint too early rejects the reduced group even with one-output grace");
+        check(!reduced.canAdmitReduced(10000000,10150000,83333,0,0,std::nullopt,0),"unmeasured first interpolation cannot admit a reduced group");
+        check(!reduced.canAdmitReduced(10000000,10150000,83333,0,0,3,15),"queued earlier GPU work consumes the reduced deadline");
+        check(!reduced.recovering(),"reduced affordability query does not touch recovery state");
+    }
+    {
         veyra::engine::FgRecoveryBudget queued;
         queued.complete(10,true,false,10000000,4);
         check(queued.admit(10000000,10020000,0,0),"idle GPU can fit the measured batch");

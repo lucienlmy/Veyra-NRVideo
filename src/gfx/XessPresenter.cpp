@@ -96,7 +96,7 @@ struct XessPresenter::Impl {
 };
 XessPresenter::XessPresenter():p_(std::make_unique<Impl>()){}
 XessPresenter::~XessPresenter()=default;
-bool XessPresenter::initialize(ID3D12Device* device,ID3D12CommandQueue* queue,IDXGIFactory2* factory,HWND window,const DXGI_SWAP_CHAIN_DESC1& desc,IDXGISwapChain3** swapchain,uint32_t fgMultiplier){
+bool XessPresenter::initialize(ID3D12Device* device,ID3D12CommandQueue* queue,IDXGIFactory2* factory,HWND window,const DXGI_SWAP_CHAIN_DESC1& desc,IDXGISwapChain3** swapchain,uint32_t fgMultiplier,bool lowLatencySleep){
     if(GetEnvironmentVariableW(L"VEYRA_TEST_XESS_INIT_FAILURE",nullptr,0)){
         log::warn("xess-fg","test-only initialization rejection; runtime not loaded");return false;
     }
@@ -156,8 +156,9 @@ bool XessPresenter::initialize(ID3D12Device* device,ID3D12CommandQueue* queue,ID
     }
     if(!p.check(p.xellD3D12CreateContextFn(device,&p.ll),"XeLL create",true)||!p.check(p.xefgSwapChainD3D12CreateContextFn(device,&p.fg),"Create",true))return false;
     if(!p.check(p.xefgSwapChainSetLatencyReductionFn(p.fg,p.ll),"Attach XeLL",true))return false;
-    xell_sleep_params_t sleep{};sleep.bLowLatencyMode=1;
+    xell_sleep_params_t sleep{};sleep.bLowLatencyMode=lowLatencySleep?1:0;
     if(!p.check(p.xellSetSleepModeFn(p.ll,&sleep),"XeLL sleep mode",true))return false;
+    log::info("xess-fg",std::format("XeLL bLowLatencyMode={} (0 = pass-through; sleep/markers still issued per XeLL contract)",unsigned(sleep.bLowLatencyMode)));
     // Query the real ceiling before deciding what to request. The unlock (U5)
     // is what makes this report more than 1 on a non-Intel GPU.
     {
@@ -194,7 +195,7 @@ bool XessPresenter::initialize(ID3D12Device* device,ID3D12CommandQueue* queue,ID
     if(p.requestedGenerated>0&&!p.check(p.xefgSwapChainSetNumInterpolatedFramesFn(p.fg,p.requestedGenerated),"SetNumInterpolatedFrames",true))return false;
     return p.check(p.xefgSwapChainD3D12GetSwapChainPtrFn(p.fg,__uuidof(IDXGISwapChain3),reinterpret_cast<void**>(swapchain)),"GetSwapChain",true);
 #else
-    (void)device;(void)queue;(void)factory;(void)window;(void)desc;(void)swapchain;(void)fgMultiplier;
+    (void)device;(void)queue;(void)factory;(void)window;(void)desc;(void)swapchain;(void)fgMultiplier;(void)lowLatencySleep;
     log::error("xess-fg","Intel XeSS SDK unavailable at build time");return false;
 #endif
 }
