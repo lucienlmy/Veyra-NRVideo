@@ -1,5 +1,15 @@
 # Veyra 工作记录
 
+## 2026-09-22 修改前/修改后同时段 A/B：发现 Reduced 路径在真超分 6X 下是退步
+
+把修改前的基线 exe（`checkpoint/pre-fg-independent-repair-20260922`）与当前 exe 交替
+各跑 2 轮同时段对照。XeSS 4X 无差异；原生 DLSS 6X 轻微正面（最低秒 246/261→257/272）；
+**真超分 NR DLSS 6X 呈现率从约 164/s 掉到约 147/s（−10%），整段低一档**。定位到满组准入
+550→348、降级组 638，即本可完整准入的组被改判成 2X。用 `VEYRA_TEST_FG_NO_REDUCED=1`
+验证：满组、生成帧、呈现率全部回到修改前水平，Reduced 负全责。**未改默认值**，
+三个处理方案与证据见 [执行记录 §3e](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)，
+数据 `b9/{effect-ab,reduced-ab}/`。
+
 ## 2026-09-22 统一修复第 9 批（收口遗留三项）
 
 标签 `checkpoint/plan-b9-done-20260922`。B1 完整版改用**显式捕获**落地：编译器枚举出
