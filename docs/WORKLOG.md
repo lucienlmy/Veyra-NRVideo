@@ -10,7 +10,9 @@ step lambda 实际引用的 45 个局部量并逐个列出，新增引用从此�
 实卡格式回归；证据留 `b9/upload-bench/`。延迟 1 实测：pro 与 fullscreen 交替各 2 次，
 DLSS 2X 逐项相同（absLatenessP95 0.75/0.77 对 0.77/0.77），**专业模式无额外延迟**；
 Composed 与 independent flip 的确证仍需 PresentMon。门槛全过，实卡 FG 40.03 ms /
-无 FG 10.84 ms（第 8 批 42.5 / 11.56），dropped 0。运行入口 exe SHA256 前 16 位
+无 FG 10.84 ms（第 8 批 42.5 / 11.56），dropped 0。第 9 批 FG 矩阵五个工况全部回到第 6 批
+水平（原生 XeSS 4X Present 阻塞 0.747 ms，第 6 批 0.733、第 8 批 11.98），第 8 批的“变慢”
+未复现，确认为时段而非代码。运行入口 exe SHA256 前 16 位
 `E8326689DC1510AF`。详见 [执行记录 §3d](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
 
 ## 2026-09-22 统一修复第 8 批（收尾）与 XeSS 复跑排查
