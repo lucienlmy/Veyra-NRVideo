@@ -228,6 +228,14 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
     // One pending frame plus one reader-owned frame, never an IMediaSample
     // reference. Holding the producer's sole RGB32 sample starves its allocator.
     AVFrame* frame=nullptr;AVFrame* pendingFrame=nullptr;bool pending=false,callbackError=false,configured=false;
+    // Native path only: the callback copies the driver sample into
+    // stagingFrame WITHOUT holding the mailbox lock (a 4K NV12 copy is
+    // 1-3 ms and used to block tryRead for its whole duration, sweep
+    // 2026-09-22 C3), then publishes it by pointer swap.
+    AVFrame* stagingFrame=nullptr;bool stagingBusy=false;
+    // Owner wake event for tryRead callers that prefer an event over a timer
+    // (capture latency review item 2).
+    HANDLE frameEvent=nullptr;
     double pendingTime=0,lastPts=0,readAgeMs=0;bool pendingDiscontinuity=false,forceDiscontinuity=false;
     int64_t nominalDuration100ns=0;pipeline::Rational pendingDuration=pipeline::Rational::unknown();
     uint64_t received=0,dropped=0,lastDrop=0,sequence=0;
@@ -394,13 +402,19 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
         const bool valid=sample&&std::isfinite(time)&&SUCCEEDED(sample->GetPointer(&data))&&data&&
             (compressedPath?sample->GetActualDataLength()>0:sample->GetActualDataLength()>=LONG(layout.sampleBytes));
         bool enqueued=false;uint64_t timingSequence=0;int64_t copied100ns=0;double lockWaitMs=0,arrivalDeltaMs=0,ptsDeltaMs=0;
+        // Native path: claim the staging frame, copy outside the lock.
+        AVFrame* staged=nullptr;bool stagedOk=false;
+        if(valid&&!compressedPath){
+            {std::lock_guard lock(mutex);if(stagingFrame&&!stagingBusy){stagingBusy=true;staged=stagingFrame;}}
+            if(staged)stagedOk=copyCaptureSample(layout,data,size_t(sample->GetActualDataLength()),*staged,verticalFlip.load());
+        }
         {
             std::lock_guard lock(mutex);
             lockWaitMs=std::chrono::duration<double,std::milli>(Clock::now()-arrival).count();
             // The compressed path decodes in its own worker and keeps its own
             // frame pool, so the preallocated NV12 mailbox is legitimately
             // empty between reads; only the native path requires it here.
-            if(!valid||(!compressedPath&&!pendingFrame)){callbackError=true;}
+            if(!valid||(!compressedPath&&!pendingFrame)){callbackError=true;if(staged)stagingBusy=false;}
             else {
                 const double previous=compressedPath?lastCallbackTime:pendingTime;
                 if(received){arrivalDeltaMs=std::chrono::duration<double,std::milli>(arrival-latestArrival).count();ptsDeltaMs=(time-previous)*1000;}
@@ -445,7 +459,17 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
                     lastCallbackTime=time;
                     compressedQueue.push_back(std::move(entry));enqueued=true;
                 }else{
-                    if(!copyCaptureSample(layout,data,size_t(sample->GetActualDataLength()),*pendingFrame,verticalFlip.load())){callbackError=true;wake.notify_one();return S_OK;}
+                    if(staged){
+                        stagingBusy=false;
+                        if(!stagedOk){callbackError=true;wake.notify_one();return S_OK;}
+                        // Publish: the copied frame becomes pendingFrame; the
+                        // previous pendingFrame is the next staging target.
+                        std::swap(stagingFrame,pendingFrame);
+                    }else{
+                        // Staging frame unavailable (should not happen once
+                        // configured); keep the locked copy as a safe fallback.
+                        if(!copyCaptureSample(layout,data,size_t(sample->GetActualDataLength()),*pendingFrame,verticalFlip.load())){callbackError=true;wake.notify_one();return S_OK;}
+                    }
                     if(pending)++dropped;
                     // Inspect consecutive callbacks, not consecutive mailbox reads.
                     // Preserve a driver/clock break when its sample is overwritten.
@@ -462,6 +486,7 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
             }
         }
         if(enqueued)decodeWake.notify_one();
+        if(frameEvent)SetEvent(frameEvent);
         if(timingSequence&&(timingSequence%120==0||lockWaitMs>5))log::info("capture-callback",std::format("source={} entryToLockMs={:.3f} entryToCopiedMs={:.3f} bytes={} compressed={} arrivalDeltaMs={:.3f} ptsDeltaMs={:.3f} sampleDurationMs={:.3f} (callback cost, not display latency)",timingSequence,lockWaitMs,(copied100ns-std::chrono::duration_cast<std::chrono::nanoseconds>(arrival.time_since_epoch()).count()/100)/10000.0,sample->GetActualDataLength(),compressedPath,arrivalDeltaMs,ptsDeltaMs,sampleTime?double(sampleEnd-sampleStart)/10000:-1));
         if(log::verboseFrameLogs()&&timingSequence)log::info("capture-ingress-sample",std::format("source={} arrival={} copied={} compressed={}",timingSequence,std::chrono::duration_cast<std::chrono::nanoseconds>(arrival.time_since_epoch()).count()/100,copied100ns,compressedPath));
         wake.notify_one();return S_OK;
@@ -469,7 +494,8 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
     HRESULT STDMETHODCALLTYPE BufferCB(double,BYTE*,long)override{return E_NOTIMPL;}
 };
 CaptureCardSource::CaptureCardSource():p_(std::make_unique<Impl>()){}
-CaptureCardSource::~CaptureCardSource(){close();}
+HANDLE CaptureCardSource::frameEvent()const{return p_->frameEvent;}
+CaptureCardSource::~CaptureCardSource(){close();if(p_->frameEvent){CloseHandle(p_->frameEvent);p_->frameEvent=nullptr;}}
 std::vector<CaptureDevice> CaptureCardSource::deviceDetails(bool audio){
     std::vector<CaptureDevice> result;
     for(auto& moniker:monikers(audio)){
@@ -790,11 +816,13 @@ bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.cle
     }
     if(FAILED(p.graph.As(&p.control))||FAILED(p.graph.As(&p.events)))return false;
     if(p.grab&&(FAILED(p.grab->SetBufferSamples(FALSE))||FAILED(p.grab->SetCallback(&p,0))))return false;
-    for(auto** f:{&p.frame,&p.pendingFrame}){
+    for(auto** f:{&p.frame,&p.pendingFrame,&p.stagingFrame}){
         *f=av_frame_alloc();if(!*f)return false;
         (*f)->format=p.layout.format;(*f)->width=p.info.width;(*f)->height=p.info.height;
         if(av_frame_get_buffer(*f,32)<0)return false;
     }
+    p.stagingBusy=false;
+    if(!p.frameEvent)p.frameEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
     if(compressedPath){
         // Write targets: the frame the worker is filling plus one spare handed
         // out by read(). Frames are never reused while the caller still owns
@@ -1262,7 +1290,7 @@ void CaptureCardSource::close()noexcept{
     if(p.workerFrame)av_frame_free(&p.workerFrame);
     for(auto*& frame:p.compressedFree)if(frame)av_frame_free(&frame);
     p.compressedFree.clear();
-    av_frame_free(&p.frame);av_frame_free(&p.pendingFrame);
+    av_frame_free(&p.frame);av_frame_free(&p.pendingFrame);av_frame_free(&p.stagingFrame);p.stagingBusy=false;
     if(p.pendingHardware)av_frame_free(&p.pendingHardware);if(p.hardwareRead)av_frame_free(&p.hardwareRead);
     p.compressedDecoder.close();
     if(p.decodeDevice){p.decodeDevice->Release();p.decodeDevice=nullptr;}if(p.decodeQueue){p.decodeQueue->Release();p.decodeQueue=nullptr;}

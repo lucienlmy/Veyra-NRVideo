@@ -1264,8 +1264,16 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
     out = FrameOutputs{};
     out.ptsMs = ptsMs;
     if(!sourceFrameId)sourceFrameId=realFrameIndex_+1;
-    diagnostics::DiagnosticEvent diagnostic;diagnostic.stage="frame";diagnostic.identity={epoch_+uint64_t(reset),desc_.settingsRevision,sourceFrameId};diagnostic.batch=realFrameIndex_+1;
-    diagnostic.resolution.source={srcW_,srcH_};diagnostic.resolution.base={workW_,workH_};diagnostic.resolution.nr={nrW_,nrH_};diagnostic.resolution.flow={nvofW_,nvofH_};diagnostic.resolution.fg=diagnostic.resolution.output={workW_,workH_};diagnostic.runtimeHash="unverified-user-replaceable";diagnostic.flowApplied=std::to_string(actualFlowPerf());diagnostic.fallbackReason=mvecSource_;Logger::diagnosticContext(diagnostic);
+    // The per-frame diagnostic context is only consumed when a warning or
+    // error is logged; reuse one member event and refresh the cheap fields
+    // (the string members are set once per graph, sweep 2026-09-22 A4).
+    diagnostics::DiagnosticEvent& diagnostic=frameDiagnostic_;
+    if(diagnostic.stage.empty()){diagnostic.stage="frame";diagnostic.runtimeHash="unverified-user-replaceable";}
+    diagnostic.identity={epoch_+uint64_t(reset),desc_.settingsRevision,sourceFrameId};diagnostic.batch=realFrameIndex_+1;
+    diagnostic.resolution.source={srcW_,srcH_};diagnostic.resolution.base={workW_,workH_};diagnostic.resolution.nr={nrW_,nrH_};diagnostic.resolution.flow={nvofW_,nvofH_};diagnostic.resolution.fg=diagnostic.resolution.output={workW_,workH_};
+    if(diagnosticFlowPerf_!=actualFlowPerf()){diagnosticFlowPerf_=actualFlowPerf();diagnostic.flowApplied=std::to_string(diagnosticFlowPerf_);}
+    if(diagnostic.fallbackReason!=mvecSource_)diagnostic.fallbackReason=mvecSource_;
+    Logger::diagnosticContext(diagnostic);
     static const bool graphOff = GetEnvironmentVariableW(L"VEYRA_GRAPH_OFF", nullptr, 0) != 0;
     if (!frame || !initialized_ || !std::isfinite(ptsMs)) return false;
     // Reject before CPU plane access, swscale, or command-slot acquisition.
@@ -1347,8 +1355,8 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
     gpuTimer_.frame({epoch_,desc_.settingsRevision,realFrameIndex_+1},context_.fence());gpuTimer_.mark(list,GpuStage::Color);
 
     // Both CPU source layouts feed the same bounded scene/cadence history.
-    auto analyzeLuma = [&](std::vector<uint8_t> sample) {
-        std::vector<double> hist(256,0);double sad=0;
+    auto analyzeLuma = [&](std::vector<uint8_t>& sample) {
+        auto& hist=lumaHistogram_;std::fill(hist.begin(),hist.end(),0.0);double sad=0;
         for(auto v:sample)hist[v]+=1.0/sample.size();
         if(previousLuma_.size()==sample.size())for(size_t i=0;i<sample.size();++i)sad+=std::abs(int(sample[i])-int(previousLuma_[i]))/(255.0*sample.size());
         cadence_.observe(ptsMs,sad,previousLuma_.size()==sample.size());
@@ -1362,7 +1370,7 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
             veyra::log::info("scene",std::format("history boundary frame={} ptsMs={} cutCandidate={} cadenceBreak={} sad={} histogramDistance={}",
                 realFrameIndex_,ptsMs,analysis.isSceneCut,analysis.isCadenceBreak,analysis.sadScore,analysis.histogramDistance));
         }
-        previousLuma_=std::move(sample);
+        std::swap(previousLuma_,sample);
     };
 
     if(gpuRgb){
@@ -1390,7 +1398,7 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
             }
         }
         if(!desc_.stillImage){
-            std::vector<uint8_t> sample;sample.reserve(64*36);
+            auto& sample=lumaSample_;sample.clear();sample.reserve(64*36);
             const bool bgr=frame->format==AV_PIX_FMT_BGRA||frame->format==AV_PIX_FMT_BGR0;
             for(unsigned y=0;y<36;++y)for(unsigned x=0;x<64;++x){
                 const unsigned sx=x*srcW_/64,sy=y*srcH_/36;
@@ -1398,7 +1406,7 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
                 else{const auto* p=frame->data[0]+ptrdiff_t(sy)*frame->linesize[0]+sx*(desc_.yuy2Input?2:4);
                     sample.push_back(desc_.yuy2Input?p[0]:uint8_t((54*unsigned(p[bgr?2:0])+183*unsigned(p[1])+19*unsigned(p[bgr?0:2])+128)>>8));}
             }
-            analyzeLuma(std::move(sample));
+            analyzeLuma(sample);
         }
         tracker_.transition(list,rgbTex_.Get(),D3D12_RESOURCE_STATE_COPY_DEST);
         D3D12_TEXTURE_COPY_LOCATION dst{},src{};dst.pResource=rgbTex_.Get();dst.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
@@ -1521,10 +1529,10 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
         // of P010/P016 retains the existing 8-bit scene/cadence proxy exactly.
         const auto* sampleLuma=directUpload?frame->data[0]:planes[0];
         const auto samplePitch=directUpload?ptrdiff_t(frame->linesize[0]):ptrdiff_t(lumaPitch_);
-        std::vector<uint8_t> sample;sample.reserve(64*36);
+        auto& sample=lumaSample_;sample.clear();sample.reserve(64*36);
         for(unsigned y=0;y<36;++y)for(unsigned x=0;x<64;++x)
             sample.push_back(sampleLuma[ptrdiff_t(y*srcH_/36)*samplePitch+(x*srcW_/64)*sampleBytes+(sampleBytes-1)]);
-        analyzeLuma(std::move(sample));
+        analyzeLuma(sample);
         if(!directUpload){for (uint32_t y = 0; y < srcH_; ++y)
             std::memcpy(mappedLuma_[parity] + y * lumaPitch_, planes[0] + y * lumaPitch_, srcW_*(desc_.wideYuvInput()?2:1));
         for (uint32_t y = 0; y < (srcH_+1) / 2; ++y)

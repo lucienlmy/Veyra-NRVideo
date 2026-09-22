@@ -65,6 +65,10 @@ public:
     const std::wstring& errorMessage()const{return error_;}
     SourceReadStatus read(pipeline::FramePacket&,const AVFrame**)override;
     SourceReadStatus tryRead(pipeline::FramePacket&,const AVFrame**);
+    // Auto-reset event signalled after each delivered sample; lets the graph
+    // owner wait on "frame or deadline" instead of a fixed 1 ms timer slice.
+    // Null until configure(); the handle stays valid until close().
+    HANDLE frameEvent()const;
     bool seek(const pipeline::Rational&)override{return false;}
     void close()noexcept override;
 private:

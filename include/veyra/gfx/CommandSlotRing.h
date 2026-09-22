@@ -109,7 +109,8 @@ private:
     ComPtr<ID3D12Resource> timingReadback_;
     uint64_t timestampFrequency_ = 0, cpuWaitCount_ = 0, submitCount_ = 0;
     double cpuWaitMilliseconds_ = 0;
-    std::vector<double> gpuCommandTimesMs_;
+    std::vector<double> gpuCommandTimesMs_; // 16384-entry ring once full (sweep E6)
+    size_t gpuCommandTimesCursor_=0;
 };
 
 } // namespace veyra::gfx

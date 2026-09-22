@@ -19,6 +19,7 @@
 // warm-up evaluate runs before views exist; static views are created last.
 #include <cstdint>
 #include "veyra/pipeline/ResetCoordinator.h"
+#include "veyra/diagnostics/DiagnosticEvent.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -451,6 +452,12 @@ private:
     std::shared_ptr<AVFrame> hardwareInputFrames_[2];
     core::SceneCadenceAnalyzer scene_;
     std::vector<uint8_t> previousLuma_;
+    // Reused per-frame scratch (sweep A4/A5): diagnostic context and the
+    // 64x36 luma sample / 256-bin histogram used by scene/cadence analysis.
+    diagnostics::DiagnosticEvent frameDiagnostic_;
+    uint32_t diagnosticFlowPerf_=~0u;
+    std::vector<uint8_t> lumaSample_;
+    std::vector<double> lumaHistogram_=std::vector<double>(256,0.0);
     double prevPtsMs_ = -1.0;
     bool prevValid_ = false;
     bool fgHistorySkipped_ = false;

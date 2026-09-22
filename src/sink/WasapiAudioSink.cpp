@@ -161,10 +161,16 @@ void AudioPipeline::pushDecoded(const AVFrame* frame)
     const bool layoutMatches=layout.nb_channels==int(pcmFormat_.channels)&&
         ((layout.order==AV_CHANNEL_ORDER_NATIVE&&layout.u.mask==pcmFormat_.mask)||
          (layout.order==AV_CHANNEL_ORDER_UNSPEC&&layout.nb_channels<=2));
-    if(!layoutMatches||frame->sample_rate<=0||
-       (swr_&&(frame->sample_rate!=swrInputRate_||frame->format!=swrInputFormat_))){
-        log::error("audio-format","Decoded audio layout/rate/format changed; reopen source required");
+    if(!layoutMatches||frame->sample_rate<=0){
+        log::error("audio-format","Decoded audio channel layout changed; reopen source required");
         stopFlag_=true;return;
+    }
+    if(swr_&&(frame->sample_rate!=swrInputRate_||frame->format!=swrInputFormat_)){
+        // Sample rate / sample format changes (common at chapter or ad
+        // boundaries) rebuild the resampler instead of going silent
+        // (sweep 2026-09-22 C7). The output layout is unchanged.
+        log::info("audio-format",std::format("decoded audio rate/format changed {}Hz/{} -> {}Hz/{}; rebuilding resampler",swrInputRate_,int(swrInputFormat_),frame->sample_rate,frame->format));
+        swr_free(&swr_);swr_=nullptr;
     }
     // Convert to 48 kHz float in converted_, preserving the speaker layout.
     if (swr_ == nullptr) {

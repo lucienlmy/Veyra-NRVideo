@@ -49,11 +49,16 @@ MediaFileSource::~MediaFileSource()
 
 bool MediaFileSource::fallbackToSoftware(std::string_view reason)
 {
-    if (!decoder_.hardwareActive() || framesRead_ != 0 || path_.empty()) {
+    if (!decoder_.hardwareActive() || path_.empty()) {
         return false;
     }
+    // Mid-stream failures (driver/pool errors after frames were delivered)
+    // reopen in software and seek back to the last delivered PTS; the caller
+    // sees a Discontinuity flag so temporal history resets (sweep B5).
+    const bool midStream = framesRead_ != 0;
+    const int64_t resumeUs = lastPtsUs_;
     veyra::log::warn("source-file", std::format(
-        "D3D12VA first-frame fallback to software reason={} path=redacted", reason));
+        "D3D12VA {} fallback to software reason={} path=redacted resumeUs={}", midStream ? "mid-stream" : "first-frame", reason, resumeUs));
     decoder_.close();
     demuxer_.close();
     if (!demuxer_.open(path_)) {
@@ -67,6 +72,15 @@ bool MediaFileSource::fallbackToSoftware(std::string_view reason)
         return false;
     }
     info_.hardwareDecodeActive = false;
+    if (midStream && resumeUs != INT64_MIN) {
+        if (!demuxer_.seekToUs(std::max<int64_t>(0, resumeUs))) veyra::log::warn("source-file", "software fallback could not seek back; continuing from stream start");
+        decoder_.flushBuffers();
+        // The engine treats Seek as a hard history reset; frames before the
+        // resume point are dropped by the caller's discardBefore logic.
+        pendingSeekFlag_ = true;
+        lastPtsUs_ = INT64_MIN;
+        ++epoch_;
+    }
     info_.videoDecodePath = "software";
     info_.containerName = demuxer_.formatName();
     info_.videoPixelFormatName = params->format >= 0 && av_get_pix_fmt_name(static_cast<AVPixelFormat>(params->format))
