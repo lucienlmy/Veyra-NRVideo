@@ -38,6 +38,7 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <limits>
 #include <cmath>
 #include <deque>
 #include <algorithm>
@@ -493,6 +494,10 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
             // generation is suppressed over stable intervals when sustained
             // late. Export/images/paused frames never enter these paths.
             uint64_t previewSkippedTotal=0,previewSkippedSinceSubmit=0,previewSkipRetained=0;int64_t nextPreviewSkipLog=0;
+            // Media PTS of the last frame the graph actually processed. The
+            // temporal stages care about the gap to that frame, not about how
+            // many candidates were dropped on the way (see boundedSkip below).
+            double lastProcessedPtsMs=std::numeric_limits<double>::quiet_NaN();
             bool previewSkipSinceProcess=false;
             // Cumulative provider-submission totals already fed to the frame
             // flow. The AMD provider reports presentation from its own thread,
@@ -1100,10 +1105,29 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 // skips still reset. VEYRA_TEST_PREVIEW_SKIP_RESET restores
                 // the unconditional reset for A/B runs.
                 static const bool skipAlwaysResets=GetEnvironmentVariableW(L"VEYRA_TEST_PREVIEW_SKIP_RESET",nullptr,0)>0;
-                const bool boundedSkip=previewSkipSinceProcess&&!skipAlwaysResets&&previewSkippedSinceSubmit<=2&&!pipeline::breaksHistory(pkt.flags);
+                // Retain temporal history across a skip when the gap to the
+                // last processed frame is short enough that optical flow can
+                // still track it. Two earlier criteria were wrong:
+                //   - the count bound (<=2) used previewSkippedSinceSubmit,
+                //     which is cleared on SUBMIT, not on process, so skips
+                //     accumulated across frames that were processed but not
+                //     submitted and tripped the bound spuriously;
+                //   - a count says nothing about the actual temporal gap.
+                // Measured 2026-09-22 on a user report of NR flicker under
+                // load: when the scheduler falls behind it skips 4-10
+                // candidates per second, so the bound never held, every burst
+                // forced kReset=1 into the NR feature, and the denoiser
+                // re-converged several times a second - visible as flicker at
+                // exactly the drop rate. A gap this small is just a briefly
+                // lower frame rate; it is not new content.
+                constexpr double kRetainHistoryGapMs=250.0;
+                const double skipGapMs=previewSkipSinceProcess&&std::isfinite(lastProcessedPtsMs)?pts-lastProcessedPtsMs:0.0;
+                const bool boundedSkip=previewSkipSinceProcess&&!skipAlwaysResets&&
+                    std::isfinite(lastProcessedPtsMs)&&skipGapMs>0&&skipGapMs<=kRetainHistoryGapMs&&
+                    !pipeline::breaksHistory(pkt.flags);
                 if(boundedSkip){++previewSkipRetained;
                     if(host100ns()>=nextPreviewSkipLog){nextPreviewSkipLog=host100ns()+10000000;
-                        veyra::log::info("preview-skip",std::format("retained history across {} skipped candidate(s) source={} retainedTotal={} skippedTotal={} (bounded skip; no NR/FG/XeSS reset)",previewSkippedSinceSubmit,pkt.sequence,previewSkipRetained,previewSkippedTotal));}
+                        veyra::log::info("preview-skip",std::format("retained history across a {:.1f} ms gap source={} retainedTotal={} skippedTotal={} (bounded skip; no NR/FG/XeSS reset)",skipGapMs,pkt.sequence,previewSkipRetained,previewSkippedTotal));}
                 }
                 const bool temporalBreak=pipeline::breaksHistory(pkt.flags)||(previewSkipSinceProcess&&!boundedSkip);
                 const bool previewOnlyReset=!hardFrameReset&&temporalBreak;
@@ -1255,6 +1279,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 }
                 loopTrace.mark("graphSubmit");
                 previewSkipSinceProcess=false;
+                if(processed)lastProcessedPtsMs=pts;
                 if(!processed){
                     const auto failedComponent=graph.failedBackend();
                     if(!transaction){
