@@ -1,5 +1,805 @@
 # Veyra 工作记录
 
+## 2026-09-22 帧同步重新设计：输出上限接回生成量，删掉测不出作用的模式选择器
+
+存档 `checkpoint/pre-pacing-redesign-20260922`。实测确认三个模式无差异后重做：
+**输出上限从"呈现时丢弃已算好的帧"改为"按 `ceil(上限/源帧率)` 决定补帧实际生成多少"**，
+只降不升、下限 2X、不超过用户倍率。同时段交替各 2 轮实测（`b18/cap-ab/`）：
+原生 NR DLSS 6X 生成帧 5636→1659（−71%）、GPU 88.5%→62.7%、**功耗 221→174 W（−21%）**；
+真超分 NR DLSS 6X 只降 4 W（−2%），因为该档瓶颈在超分降噪不在补帧——**不可按原生数字
+对外承诺省电**。另修限速器漂移：原用"上次实际提交+间隔"导致抖动累积，100 FPS 上限实测
+只跑到 95.7–97.4/s（低于刷新率），改绝对时间网格后四轮精确 100.0/s。
+删除模式选择器（`PacingMode` 字段保留不参与判断，不动已保存设置布局），
+控件重排为三项独立：低延迟队列/显示同步/输出上限；XeSS/FSR 下按新增的
+`presentationProviderOwned` 置灰，不靠解析中文串。门槛全过。
+**未验收**：低延迟队列的排队延迟本机测不到；6X 降 2X 的主观观感需用户实看。
+详见 [执行记录 §3k](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+
+## 2026-09-22 display-stats 指标错误，送显口径结论全部撤回；帧同步实测无效
+
+**指标 bug**：`sampleFrameStatistics` 把 `displayed` 取成 `PresentRefreshCount` 增量
+（刷新序号，每秒增量恒等于刷新率），导致 `notDisplayed` 与 `refreshesWithoutNewFrame`
+结构上恒为 0。破绽是"不开补帧时 displayed 101 > presents 60"，物理不可能。
+改用 `PresentCount` 同样不对（实测 `presents=273 displayed=273 refreshes=100`）：
+**撕裂 + 翻转丢弃下 DXGI 给不出面板实际显示帧数**。日志改为只报原始计数并写明局限，
+删除两个派生伪指标。**据此撤回 §3h 全部结论与 §3i 的两列**，Reduced 是赚是亏
+目前无可信结论，默认维持开启不动。详见 [执行记录 §3j](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+
+**帧同步实测无效**（用户反馈属实）：新增冒烟开关 `--smoke-pacing off|lowqueue|even|reflex`，
+同时段交替各 2 轮。四个模式在吞吐、逐秒 sd、媒体时钟偏差上无可测差异，逐秒 sd 开启后
+略差（DLSS 4X 关 3.3–3.55，开 3.44–4.79）。设置确实生效（`effective=true/2/0`，
+开补帧时按设计退回低排队）。原因：XeSS/FSR 下帧同步被整体禁用、Reflex 遇补帧退回低排队、
+低排队仅把 DXGI 队列深度 3 改 1。**保留**：队列深度对"提交到上屏"的排队延迟有影响，
+但该延迟需 PresentMon 才能测，未下"完全无用"的结论。数据 `b13/pacing-ab/`。
+
+**功耗**：本机 30 s 五工况功耗 sd 0.8–2.4 W（175–241 W 上），波动 <1%；
+240 s 长测见下一条。
+
+## 2026-09-22 更正：Reduced 判定用错口径，恢复默认开启
+
+补上 DXGI 送显数据后推翻前一条结论。100 Hz 面板上，降级开/关两种配置的**实际显示
+帧数完全相同**（原生 6X 100.3/s、真超分 6X 100.7/s），`refreshesWithoutNewFrame` 全为 0；
+降级少提交的约 10 张/s 全部落在 `notDisplayed`，本来就不会显示。按送显口径重判，
+降级开启的长间隔 34→0（原生）、150→90（真超分），`gpuReadyP95` 真超分降约 3 ms，
+**每项可见指标都不差、两项更好**，故恢复默认开启。记账修复保留（真实 bug，
+逐秒抖动 sd 15.99→5.48、最低秒 67→128）。曾考虑"仅在提交超过刷新率时才降级"，
+已否决并记录理由；确认软件不存在按刷新率限速（`syncInterval=0`+`ALLOW_TEARING`，
+100 Hz 屏上实测每秒提交 292 次）。**教训：补帧收益一律用送显口径判断，提交帧数在
+超供时与观感无关。** 本轮两次判据错误（跨时段、口径）均已推翻，见
+[执行记录 §3h](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+
+## 2026-09-22 第 10 批：Reduced 路径修记账后仍为净负，改为默认关闭
+
+先修了 `FgRecoveryBudget::complete` 的记账 bug——降级组被当成 warmup，基础耗时不进
+成本模型，导致模型只看见贵的满组、越算越贵、越拒越多。改成只跳过补帧成本、保留基础
+成本后，真超分 6X 抖动 `sd` 从 15.99 降到 5.48、最低秒 67→128，但满组准入没恢复。
+同时段四方对照（修复后/修复前/关闭降级/修改前基线，各 2 轮，`b10/fix-ab/`）显示
+**降级在原生 6X（288→275）与真超分 6X（149→144）都是净负，修记账后依然是**，
+根因是一个中点占掉的 GPU 时间让下一个满组付不起，救一次扣掉的帧比补上的多。
+故**默认关闭**：`VEYRA_TEST_FG_NO_REDUCED` 取消，改 `VEYRA_TEST_FG_REDUCED=1` 才启用；
+记账修复保留。同时验证：**关闭降级后当前构建与修改前基线逐项一致**，这两个工况无其他退步。
+此前"原生 6X 轻微正面"系跨时段比较，已推翻。门槛全过（scheduler 127、修复合同 205、
+FG 呈现 D3D12 errors=0、backend-switch 16、admission debugErrors=0、实卡 rate test PASS、
+实卡 FG 39.92 ms dropped 0）。详见 [执行记录 §3g](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+
+## 2026-09-22 修改前/修改后同时段 A/B：发现 Reduced 路径在真超分 6X 下是退步
+
+把修改前的基线 exe（`checkpoint/pre-fg-independent-repair-20260922`）与当前 exe 交替
+各跑 2 轮同时段对照。XeSS 4X 无差异；原生 DLSS 6X 轻微正面（最低秒 246/261→257/272）；
+**真超分 NR DLSS 6X 呈现率从约 164/s 掉到约 147/s（−10%），整段低一档**。定位到满组准入
+550→348、降级组 638，即本可完整准入的组被改判成 2X。用 `VEYRA_TEST_FG_NO_REDUCED=1`
+验证：满组、生成帧、呈现率全部回到修改前水平，Reduced 负全责。**未改默认值**，
+三个处理方案与证据见 [执行记录 §3e](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+补齐其余工况后（§3f）：真超分 NR XeSS 4X 呈现率 40.6→50.2（+23%）、生成帧 +65%、
+`gpuReadyP95` 29.7→21.1，是本轮最大收益；原生 DLSS 2X 与不开补帧持平。归因意外：
+关掉 XeSS 源周期提示无变化（该项无作用），恢复旧的跳帧重置反而更快但生成帧少 10%，
+所以提速来自别处，未进一步归因。数据 `b9/{effect-ab,effect-ab2,reduced-ab,isolate-xess}/`。
+
+## 2026-09-22 统一修复第 9 批（收口遗留三项）
+
+标签 `checkpoint/plan-b9-done-20260922`。B1 完整版改用**显式捕获**落地：编译器枚举出
+step lambda 实际引用的 45 个局部量并逐个列出，新增引用从此是编译错误而非静默悬垂；
+与搬进结构体相比语义零变化、风险为零。延迟 3b 完整版（直写 upload 堆）**实测后判定不做**：
+本机 4K NV12 写 UPLOAD 堆 0.433 ms，并不比写普通内存（0.449 ms）慢，能省的只有这一次
+0.43 ms，占无 FG 端到端 10.8 ms 的 4%，而代价是把 D3D12 所有权打进采集层并重做全部
+实卡格式回归；证据留 `b9/upload-bench/`。延迟 1 实测：pro 与 fullscreen 交替各 2 次，
+DLSS 2X 逐项相同（absLatenessP95 0.75/0.77 对 0.77/0.77），**专业模式无额外延迟**；
+Composed 与 independent flip 的确证仍需 PresentMon。门槛全过，实卡 FG 40.03 ms /
+无 FG 10.84 ms（第 8 批 42.5 / 11.56），dropped 0。第 9 批 FG 矩阵五个工况全部回到第 6 批
+水平（原生 XeSS 4X Present 阻塞 0.747 ms，第 6 批 0.733、第 8 批 11.98），第 8 批的“变慢”
+未复现，确认为时段而非代码。运行入口 exe SHA256 前 16 位
+`E8326689DC1510AF`。详见 [执行记录 §3d](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+
+## 2026-09-22 统一修复第 8 批（收尾）与 XeSS 复跑排查
+
+存档 `checkpoint/plan-b8-pre-20260922`，提交 `8a1bb0a`，标签 `checkpoint/plan-b8-done-20260922`。
+补做：压缩采集 payload 池、原生采集帧 256 字节行对齐 + 每平面单次 memcpy、每秒日志并入
+`player-timing`、调度器 OnExit 声明顺序。门槛全过，实卡 FG/无 FG 25 s 对照持平。第 8 批
+FG 矩阵整体比第 6 批慢约 10%，原生 XeSS 4X Present 阻塞 0.73→12 ms；用第 6 批提交重建
+exe 交替复跑 2×2，两版完全一致（差 <0.2 ms），差异来自时段（GPU 均值 87%→95%），不是
+代码回归。计划中 B1/延迟 3b 的完整版（step lambda 收敛、直写 upload 堆）与延迟 1 未做。
+运行入口 exe SHA256 前 16 位 `FF40BCC80A3667A0`；第 6 批对照 exe 在 `app-b6/`。
+详见 [执行记录 §3c](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。
+
+## 2026-09-22 统一修复第 7 批（补做）
+
+存档 `checkpoint/plan-b7-pre-20260922`，提交 `6d019dc`，标签 `checkpoint/plan-b7-done-20260922`。
+补做：采集回调锁外复制（第三帧 staging）、owner 按采集事件唤醒、中途硬解回退软解并回位、
+音频采样率/格式变化重建 resampler、每帧诊断与直方图缓冲复用、GPU 时长环形、硬解 EAGAIN
+上限 8。门槛全过；实卡 4K30 NR+DLSS4X 25 s 新旧 exe 对照延迟持平（42.7 vs 42.5 ms P95），
+FG 工况下相位等待主导，采集侧收益需无 FG/1440p60 长测。仍未做：压缩 payload 池、直写
+upload 堆、每秒日志合并、step lambda 收敛。运行入口 exe SHA256 前 16 位 `703B9D073AD28197`。
+
+## 2026-09-22 统一修复计划第 1–6 批实施与短测
+
+提交 `e11aa56`，标签 `checkpoint/plan-b6-done-20260922`。已修 30 项、撤回 2 项（A2 upload
+fence 前移引发跨队列 barrier 错误；B6 `recovering()` 有单测使用）、未做 12 项（采集三缓冲、
+中途硬解回退、owner 事件唤醒、每帧诊断缓冲、step lambda 收敛等，原因见执行记录）。
+门槛：UI 合同 384 用例、弹窗 19、字幕面板 31、overlay 18、scheduler 单测 127、修复合同 205、
+采集音频 18、FG 呈现 D3D12 errors=0、backend-switch 16、admission pass、SEH 注入写出
+minidump 并 flush。`ui-layout-dpi.py` 的"status detail cannot scroll"在基线 exe 同样失败，
+非本轮引入。FG 30 s 短测：原生 XeSS 4X Present 阻塞 11.5→0.73 ms，原生 DLSS 6X 长空档 3→0、
+提交 237→270/s，SR+NR XeSS 4X 源 45.4→49.9/s。详见
+[执行记录](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)。长测与实卡由用户验收；未合并、未推送。
+
+## 2026-09-22 统一修复计划
+
+合并 FG 独立修复、全软件清扫与采集延迟复查为一份分批计划：
+[统一修复计划](UNIFIED_REPAIR_PLAN_2026-09-22.md)。第 0 批已完成待长测；第 1–6 批依次为
+UI 正确性、UI 性能与退出、日志与采集线程、解码与音频韧性、引擎热路径与采集延迟（需 A/B）、
+健壮性；每批列出改动位置、验收脚本、撤回条件；另列 4 项用户决定与明确不做清单。仅文档。
+
+## 2026-09-22 采集卡延迟复查（只读）
+
+按回调→Present 逐段核对源码与 2026-09-18 实卡证据，见
+[采集延迟复查](CAPTURE_LATENCY_REVIEW_2026-09-22.md)。结论：无 FG 约 10 ms，几乎全是 GPU
+处理；DLSS 4X 的 40 ms 中 29.5 ms 是 B 帧为放置 3 张插值帧而必须的相位等待（25 ms）加
+约 4.5 ms 余量，不是浪费。可降项：owner 唤醒改条件变量、回调锁外复制并直写 upload 堆、
+MMCSS 线程特征、自适应余量收紧，合计无 FG 约 2–3 ms、4X 约 3–5 ms。最高潜在收益是
+验证专业模式圆角 `SetWindowRgn` 是否使 DWM 走合成路径（可能多一帧）。未改代码、未测试。
+
+## 2026-09-22 全软件清扫排查（只读，出整改方案）
+
+在 `codex/fg-independent-repair-20260922` 上对引擎/管线/gfx、输入源/解码/音频、UI、
+日志/导出做只读审计，新发现 45 条并逐条给出 file:line、触发条件、判定与最小修复，
+按 6 批整改排序，每批有回归门槛与撤回条件。见
+[清扫排查与整改方案](WHOLE_SOFTWARE_SWEEP_2026-09-22.md)。
+P1 要点：HDR 工况 owner 每 2 s 重建 DXGI factory 枚举输出；graph 入口 CPU 等待两帧前含 FG
+的 fence；日志 warn/error 在全局锁内每次编译 4 个正则且被采集回调线程调用；≤1080p 软解
+单线程；缺 pts 帧直接停播；隐藏的 statusBar 吞掉字幕快捷键/失败原因反馈；底栏
+ColourStatus 与 MediaTitle 重叠；专业模式 <772px 截图与参数按钮重叠；总增强开关忽略
+拒绝；字幕自动对齐线程无法取消导致关窗挂起；弹窗嵌套循环分发主窗定时器。
+未改产品代码、未构建、未运行新测试；台账已有未解决项不重复。
+
+## 2026-09-22 DLSS/XeSS 补帧独立修复（隔离分支，短测）
+
+分支 `codex/fg-independent-repair-20260922`，存档 `checkpoint/pre-fg-independent-repair-20260922`。
+按独立复核方案实施并短测：X1 XeSS 真实源周期 frameRenderTime 转正；F2 有界预览跳帧
+（≤2 帧）不再清 NR/XeSS/DLSS 历史；F3 DLSS 超预算对改为可呈现的 2X 组（harness
+5/1/5 交替不重置验证位置正确）；F4 记录显示器刷新率与 GetFrameStatistics 差分。
+X2（XeLL 关低延迟）被提供方 -15 拒绝，撤回；X3（提供方 Present 移到辅助线程）
+使源率 51→24/s、提供方周期估计 16→26 ms，已从代码删除。
+真超分+NR+XeSS4 短测：源 50.8/s、生成 152/s、历史重置 177→1、原帧间隔 p95 29→22 ms，
+组内 4.3 ms；同会话旧构建 41.9/s、8.2 ms。显示端 100 Hz 上应用提交全部被扫描出。
+门槛：scheduler 单测 127 PASS，FG 呈现测试 D3D12 errors=0，backend-switch 16 PASS。
+完整数字、撤回原因与边界见 [执行记录](FG_INDEPENDENT_REPAIR_EXECUTION_2026-09-22.md)；
+产物在 `E:/项目/Veyra/{tests,build,logs,tmp}/fg-independent-repair-20260922/`。
+长测、其他显卡、采集卡与肉眼画质由用户验收；未打包、未合并、未推送、未发布。
+
+## 2026-09-22 DLSS/XeSS 补帧独立复核（只出方案）
+
+独立于此前结论重读源码、六组 XeSS 4X 对照日志/trace 与有界修复 DLSS 矩阵。
+结论与方案见 [独立复核与修复方案](FG_INDEPENDENT_REVIEW_2026-09-22.md)，
+逐帧重解析结果在 `E:/项目/Veyra/tests/fg-independent-review-20260922/trace-analysis.json`。
+要点：XeSS 真超分+NR+4X 的源帧倒退来自 owner 线程在提供方 Present 内阻塞
+（连续帧 p50 约 27ms）与 frameRenderTime=0 的节奏正反馈，GPU 72% 是 CPU 串行化；
+预览跳帧触发 NR/XeSS/DLSS 全历史重置（当前运行 25% 呈现原帧为重置帧）是欠速闪烁的
+首要待验证假设；DLSS 6X+NR 每对 GPU 成本 19–24ms 超预算属性能上限，失败形态为
+整组空档。旧版靠 suppress 门保持源率，不是修复。未改产品代码、未构建、未运行新测试。
+
+## 2026-09-22 下载的 1.4.0 XeSS 4X 对照
+
+按用户请求测试 `E:/App/Veyra-1.4.0-win64-portable/Veyra.exe`，并同期重跑
+1.4.3/current。同一视频、两种负载，各30秒，串行运行。最终六组均exit0，
+failed=false。先发现旧版专业小窗口的交换链只有770x494，新版保持2560x1440，
+因此补做真实fullscreen对照，统一到2560x1440；一次目录名含fullscreen但命令
+仍是pro的误测明确排除，保留原始证据。完整条件、命令、哈希、统计区间及限制见
+[1.4.0对照记录](XESS_140_COMPARISON_2026-09-22.md)。
+
+原始4K输入+实时1080 NR、不加SR：1.4.0/current约240 SDK计数/s；
+本轮1.4.3因两次抑制事件约229/s。1080->4K Video SR+实时NR：
+1.4.0约59.24源+32.93生成/s，1.4.3约58.58+36.18，current约39.33+88.49。
+旧版反复停补帧；新版多生成但源连续性下降，不能只看总帧率宣称改善。
+三版NR/XeSS/XeLL文件哈希一致。未测物理扫描输出/肉眼画质；旧版无新版trace，
+不编造间隔P95/P99，也不扩展为DLSS或实卡结论。
+
+产物在 `E:/项目/Veyra/tests/fg-140-compare-actual-fullscreen-20260922/`，
+探索记录在 `fg-140-compare-20260922/`、`fg-140-compare-fullscreen-20260922/`；
+临时目录为 `E:/项目/Veyra/tmp/fg-140-compare-20260922/` 及误测对应目录。
+仅新增对照文档及本记录，无产品/测试脚本修改，无构建、打包、推送或发布。
+
+## 2026-09-22 有界修复收尾与本地存档
+
+开工 `7724ea8` 后保留两个独立修复：`f718c02` HDR 查询结果按显示器隔离，
+`7fe6201` 采集格式按稳定键恢复并核对协商尺寸/帧率/子类型。
+对应 tag 为 `checkpoint/hdr-target-state-20260922`、
+`checkpoint/capture-format-contract-20260922`；无产品调度实验进入本轮提交。
+先前 `edfd886` P010 上传收益保持，未降低画质/倍率、未添加固定等待或扩队列。
+
+构建、全部命令、日志和逐项结果见 `BOUNDED_REPAIR_EXECUTION_2026-09-22.md`。
+产物为 `E:/项目/Veyra/tests/bounded-repair-20260922/`，临时目录为
+`E:/项目/Veyra/tmp/bounded-repair-20260922/`，构建目录为
+`E:/项目/Veyra/build/playback-nr-20260920/`。产品与相关目标构建成功。
+HDR/格式/UI/字幕/颜色/预设单测、DLSS/XeSS 切换、暂停 seek、实卡重连通过；
+实卡 nominal60 实际57.2至58.7回调/s，不以5%测试容差冒充稳定满60。
+PS5关闭，实卡结果不能替代有效游戏画质。YUY2 4K合成图1:1像素回归通过。
+
+六组各30秒视频测试正常退出，记录末段提交率与源提交率及统计时长；
+DLSS6原生约287提交/s仍有长间隔，真超分+NR约148提交/s；
+同一重负载XeSS4仍约40源提交/s。未与旧二进制同期A/B，不宣称性能改善。
+单独 temporal/temporal-exact 诊断都在6X位置误差门槛失败(exit3)，正常
+资源/resize/读取生命周期模式通过(exit0)。失败记录完整保留。
+初次预设测试缺路径(exit2)、PowerShell数组传参错误(exit3)已纠正重跑；
+没有修改产品或放宽门槛来掩盖失败。
+
+核对固定 Intel 指南及本地 Magpie 源码合同；未找到可验证的新调度修复点。
+历史无效方向写入实验索引，本轮未重新启用。全软件台账逐项给出处置，
+DLSS/XeSS历史性能、闪烁/间歇卡顿及缺受影响硬件的问题保留开放。
+不将无新解法解释为纯硬件极限，按有限尝试要求结束本轮。
+
+最终 diff --check 通过；已检查提交范围只有源码/测试/文档，没有运行库、SDK、
+媒体或日志入 Git。结束前确认本轮应用/测试/构建进程已退出。
+保留一个依赖本机链接的可运行 staging，未新建便携包、合并、推送或发布。
+诊断与最终文档使用 `checkpoint/bounded-repair-verified-20260922` 定位；
+用户已授权报告后关机，实际调度结果以最终对话为准。
+
+## 2026-09-22 有界实施开工
+
+按用户最新授权启动目标模式。检查待提交源码后建立 `7724ea8`、
+`checkpoint/pre-bounded-repair-20260922` 和隔离分支 `codex/bounded-full-chain-20260922`。
+工作区 `E:/项目/Veyra/worktrees/playback-nr-20260920`，status 干净。
+该存档保留尚未验收的 HDR 三态查询候选，不声明修复已完成。
+新增 `BOUNDED_REPAIR_EXECUTION_2026-09-22.md`，规定失败路线排除、单假设比较上限、
+性能/画质/帧龄共同验收及产物路径。结束后按用户授权关机，不发布。
+
+## 2026-09-22 补全全软件问题台账，历史 DLSS/XeSS 单列
+
+用户指出上一份报告遗漏展开历史 XeSS 和 DLSS 6X。新增
+`docs/WHOLE_PRODUCT_ISSUE_LEDGER_2026-09-22.md`，更新 CURRENT_STATUS 和全链路方案入口。
+明确 D1–D3、X1–X4 与跨后端闪烁同为优先任务；采集 A–E 的排列不再造成
+“先做完采集才看历史补帧”的误读。补充源/增强/音频/显示/UI/字幕/导出/打包覆盖表，
+区分实际未解决问题、确定性缺口、待验收候选、已修事项和用户暂缓项。
+
+复核 1.4.3 同条件版本对照、FG_STABILITY_PROGRESS、NR_FG_FOLLOWUP、
+CAPTURE_UI_SYNC、CORRECTIVE_AUDIT、POST_1_4_3_REPAIR_LEDGER、SEVEN_AUDIT、
+FG_BACKEND_SWITCH、NR_QUALITY、SCHEDULING_CHAIN 与 1.4.3 Release 记录；
+源码复核 VideoPresenter 的身份/候选/VSync/cap/Reflex 分支、压缩采集位深转换、
+EnhanceGraph 的 HDR 支持边界。一次 rg 写错 XeFgPacing.cpp 路径报错，
+随后 rg --files 确认实际文件为 XessPacing.cpp；不把失败搜索当缺失实现。
+
+关键历史结论：原生 NR+DLSS6 同条件全段 272.03/268.23 提交每秒，
+P99 16.934/16.899ms；不能与另一测试后段 298 相减推导性能倒退。
+真超分+NR+XeSS4 源 58.51→39.84/s，旧版频繁停止生成，不可恢复旧门当修复。
+2X/5090 与高倍率的拒绝比例不同，不能统一归因 admission。
+源时间候选继续默认关闭；失败方向继续排除，不新造重复实验。
+
+本次仅文档补全，无产品修改、运行测试、构建、打包或 Git 提交；保留既有七个
+未提交代码/测试文件。`git diff --check` 退出 0（仅已有换行转换提示），新台账、
+全链路方案和 CURRENT_STATUS 的 Markdown 文件链接目标存在；七个代码/测试文件
+SHA-256 与本次文档编辑前一致。复查修正了台账中的 FSR 同步行号。
+这些仅为文档和修改范围检查，不冒充整机或画质验收。
+
+## 2026-09-22 全链路卡顿/闪烁/采集清晰度复核，方案交付
+
+最新用户要求先核对全链路及失败历史、写方案，不继续产品修改或性能实验。
+工作区 `E:/项目/Veyra/worktrees/playback-nr-20260920`，分支
+`codex/5090-capture-fg-20260921`，HEAD `edfd886`。新增
+`docs/FULL_CHAIN_REGRESSION_REPAIR_PLAN_2026-09-22.md`，更新 CURRENT_STATUS
+及两份旧方案入口，去掉当前入口仍建议默认尝试关键路径重叠的过时措辞。
+
+读取用户桌面的“那天就是用着4k跑着的感觉挺清晰的，但突然屏幕卡住了，然后我重启了下软件，再打开发现画面就很糊了.log”：
+8 次图初始化全部关闭 SR/NR/FG/NVOF；4K30 P010 源 311/330 的回调到达间隔
+1184.06/1314.98ms，PTS 同时跳变。不能用补帧预算解释该阶段；也不能仅凭
+回调断档认定硬件坏了。后续模式变化有选择器操作，没有日志证据证明静默降分辨率。
+关闭与再打开之间的长空白未标成死锁；提供的文件没有对应终止崩溃栈。
+
+源码复核补充：UI formatKey 恢复已存在，但采集 URI/最近打开仍保存数字格式索引，
+初次重新 GetStreamCaps 与选择时格式身份没有完整对照，重连未核对默认 FPS。
+回调持源锁时可写警告，统一 logger 仍在锁内同步写/flush；是可能阻塞边界，
+不是已测根因。采集色度最近邻和显示双线性与高质量 remote 采样路径有差异，
+不能直接称为突然变糊根因。XeSS 已做源身份/reset 检查、原生 sink 已检查动态
+媒体类型，因此不把这些已有实现重新写成缺失功能。
+
+核对 FG_EXPERIMENT_INDEX、FG_NON_NR_EXPERIMENTS、FG_RUNTIME_REPAIR_PLAN、
+FG_PIPELINE_REASSESSMENT、POST_1_4_3_REPAIR_LEDGER、DLSS_RECOVERY、
+RTX5090_CAPTURE_FG_REPAIR、SEVEN_AUDIT_REPAIR 等证据；失败方向仅保留排除清单。
+两后端从 2X 验到各自最高倍率；采集输入、历史恢复、画面内容、呈现、HDR及清晰度
+分开定因，不使用固定 15 秒假设，不新增等待或默认降档。
+
+本轮前的未提交工作保持：CMakeLists、PresentSink.h/.cpp、EngineController.cpp、
+FgPresentationTests.cpp，以及新增 HdrDisplayState.h/HdrDisplayStateTests.cpp。
+早原帧 SDR 资源回归已在前一阶段运行（DLSS 4/6/4，另加 48 原帧，像素/D3D12 错误 0），
+不等于 HDR 欠速闪烁验收。HDR 查询失败三态候选仅构建成功，尚未运行测试或打包。
+前阶段构建先因测试目标缺 /utf-8 失败，补编译选项后成功，日志：
+`E:/项目/Veyra/tests/fg-regression-20260921/build-hdr-query.log` 与 `build-hdr-query-r2.log`。
+旧 v1.4.0 对照构建仍失败于资源编译 Unicode 路径（此前还补过 NVENC include），
+`E:/项目/Veyra/tests/fg-regression-20260921/build-v140.log`；没有可运行旧版性能对照。
+
+本轮命令为 git status/log/diff、rg、Get-Content、Get-FileHash 等只读复核；
+apply_patch 仅改文档。一次组合补丁因旧方案标题上下文不匹配未应用，读取实际标题后重试。
+无新构建、GPU 运行、包、运行时修改、Git 提交、合并、push 或 Release；
+未新增产物目录。最终 `git diff --check` 通过；新方案/当前状态/两份旧方案的
+Markdown 文件链接目标全部存在；原有七个产品/测试文件 SHA-256 与本阶段编辑前
+一致。这些是文档和修改范围检查，不是运行验收。
+
+## 2026-09-21 生成 1.4.4 XeSS A/B 测试包
+
+按用户要求生成两个可并行对比的 1.4.4 便携包。A 使用当前工作区
+`0de0a1d4175ebb392d9f2f425df49f504548b2c8` 的 XeSS；B 在独立 worktree
+`E:/项目/Veyra/worktrees/xess143-compare-20260921-r1` 中仅恢复
+`v1.4.3` 的 XeSS pacing/presenter、`frameRenderTime=0` 和旧的
+`XessGenerationGate`，其余 1.4.4 修复保持同一基线。比较说明见
+`docs/XESS_1_4_4_AB_COMPARE_2026-09-21.md`。
+
+两边均用 `scripts/build-isolated.ps1` 编译 Release `veyra`，随后用
+`scripts/package-portable.ps1` 打包；编译和打包均 exit 0。包审计均为 123 文件、
+`forbiddenFiles=0`，没有把 SDK 或运行库加入源码 Git。A ZIP 位于
+`E:/项目/Veyra/test-packages/1.4.4-xess-current-20260921-r2/`，SHA256
+`03567900697B359C8BFC6DC797929F81167D331016F5C2745BB176E31C55FA11`；B ZIP 位于
+`E:/项目/Veyra/test-packages/1.4.4-xess143-20260921-r1/`，SHA256
+`D6077DCE8A977203AF57E8980B5FDDFBC176340C7F610396FFBB312ACB2E75EF`。
+
+同一 `p001.mp4`、XeSS 4X、NR/SR 关闭、12 秒烟测：A exit 0，639 源帧/1908 生成帧；
+B exit 0，668 源帧/1995 生成帧；两边日志均显示 provider `framesPresented=4`，
+无失败。该测试只证明可运行和实际进入 XeSS，不代表画质、功耗或屏幕扫描验收。
+未合并 main、未 push、未发布 Release。
+
+## 2026-09-21 整理 1.4.3 之后的修复总账
+
+新增 `docs/POST_1_4_3_REPAIR_LEDGER_2026-09-21.md`，按“已进入产品、交付/测试、
+诊断研究、已撤回、仍未解决”整理 `v1.4.3`（`3b4570e`）到当前分支的全部变化。
+明确记录 1.4.4beta 仍是本地包；真 SR 高倍率、独立降噪、提供方输出限帧和实卡/
+物理延迟没有被包装成已修复。同步在 `CURRENT_STATUS.md` 增加入口。仅文档修改，
+没有构建、合并 main、推送或发布。
+
+## 2026-09-21 收缩帧生成重构方案，移除已证伪方向
+
+按用户要求仅修改方案文档，没有继续清理源码、测试入口、构建或打包。更新
+`docs/FG_RUNTIME_REPAIR_PLAN_2026-09-21.md`：将同组 GPU 成本估算、Present
+清屏、光流复制、原生光流尺寸直传 DLSSG、提高队列优先级、XeSS 单 pending、
+NVOF/Video SR 重叠、全局取消 DLSS admission、固定等待/盲目加队列、无条件接纳
+晚到生成，以及简单 CPU/presenter 拆线程、拆 owner、逐输出发布和 FG/Enhance
+并行重叠从待实施方案删除。失败数据仍保留在实验索引和原始记录中，防止重复
+尝试；保留 XeSS 真实源时间提示、资源租约/provider 退休、生命周期和 DLSS
+真实 admission 归因等尚未被证伪的方向。未修改上述已有代码改动，未合并 main、
+未推送、未发布。
+
+## 2026-09-21 Magpie upstream refresh and source audit
+
+User requested upstream source inspection. Existing clean clone at
+E:/项目/Veyra/downloads/magpie-six-issue-audit-20260920 refreshed with
+git fetch origin --prune; git ls-remote --symref origin HEAD confirms
+experimental HEAD3841698348bfb246623d4acf791984c8b68a577b unchanged.
+Read Renderer, DLSSFrameGenerator, XeSSFGPresenter, XeSSFGTiming,
+XeSSFGPacing and FramePresentationTiming. Recorded exact source references,
+queue/CPU waits, DLSS4X clamp, pacing timestamp rewrite and transfer risks
+in MAGPIE_SCHEDULING_SOURCE_AUDIT_2026-09-21.md, linked CURRENT_STATUS.
+No runtime download, product edit, benchmark, build, package or publication.
+Documentation diff checked; source inspection does not prove visual stability.
+
+## 2026-09-21 用户要求复核失败实验清理与防重复记录
+
+核对 git status、源码实验入口与既有实验文档；工作区初始干净。
+新增 FG_EXPERIMENT_INDEX_2026-09-21.md 并从 CURRENT_STATUS 链接。
+确认六项已撤回入口不在 src/include/tests；如实列出仍默认关闭的
+光流/SR重叠实验和XeSS真实源时间提示候选，不能宣称实验代码全部清除。
+补充重试必须具备新证据、实质实现差异和验收门槛的要求。
+仅文档修改，git diff --check；未运行新性能测试、未构建或发布。
+
+## 2026-09-21 XeSS one-pending experiment rejected; DLSS evidence review
+
+Continued from a0e39ea on codex/fg-stability-20260921, pre-work checkpoint
+d2ae8ee preserved. One-pending XeSS startup-exempt revision built successfully;
+20s fg-utilization-matrix.py sr-nr-xess4 completed in
+E:/项目/Veyra/tests/fg-stability-20260921/one-pending-startup-on.
+Source throughput49.48/s vs52.25/s control, despite lower age and fewer short
+SDK intervals. Rejected per acceptance contract. Removed both experimental
+EngineController lines; rebuilt using scripts/build-isolated.ps1, target
+veyra, existing playback-nr-20260920 build and frame-pacing dependency cache.
+Reverted build exit0, log E:/项目/Veyra/logs/
+fg-stability-one-pending-reverted-20260921.log. Restored isolated app EXE;
+no package replacement. Details in FG_STABILITY_PROGRESS_2026-09-21.md.
+
+Reused baseline DLSS traces rather than repeating a performance matrix.
+sr-nr-dlss6 retained362 real-only groups;361 carry rejection markers and
+single-frame submissions, zero retained expired discards. Full123 six-frame
+GPU groups average22.919ms measured serial stages (not physical latency),
+FG batch10.806ms. Native NR6 full241 measured groups average18.066ms;
+85 real-only groups all rejection-marked. Thus rejection/seed cycles explain
+the observed holes, while measured work exceeds16.667ms in these averages.
+No proof yet that rejection estimates are optimal; no gate removal justified.
+Evidence: E:/项目/Veyra/tests/fg-utilization-20260921/baseline/
+{native-nr-dlss6,sr-nr-dlss4,sr-nr-dlss6}/result.json and stdout.log.
+Next: compare per-group predicted backlog/prefix with actual GPU stages and
+history-seed cost before choosing one DLSS candidate. P2-P6 remain pending;
+goal active. No runtime edits, push or publication.
+
+## 2026-09-21 NR/FG local package closure
+
+Source checkpoint f029707, tag checkpoint/nr-fg-followup-verified-20260921;
+ab7979c remains available. Built with scripts/build-isolated.ps1 and packaged
+with scripts/package-portable.ps1, version 1.4.4, label beta, explicit source,
+dependency, build and output directories. Package output:
+E:/项目/Veyra/test-packages/1.4.4beta-20260921-nr-followup/.
+ZIP: Veyra-1.4.4beta-win64-portable.zip, 472379957 bytes, SHA256
+A035A8C1956E1C539D39FEC917A273692A685B0A2184A026196700268B453ACB.
+
+scripts/acceptance/portable-smoke.ps1 passes 7/7 with the derived1080 video;
+scripts/acceptance/ui-fg-backends.py --portable passes using the package EXE.
+Evidence: E:/项目/Veyra/verify/1.4.4beta-20260921-nr-followup/{result.json,backends/result.json}.
+Expand-Archive plus manifest size/SHA256 checks verified all 124 files;
+EXE and 40 shaders match build, forbidden/unlisted file scan passes.
+Automatic approval review rejected deletion of the redundant extracted
+verification directory ("blocked by policy", no specific reason supplied).
+It remains alongside the ZIP, runnable package and evidence. No runtime/config
+changes after packaging.
+
+Bounded investigation ends with partial capability acceptance, not all issues
+fixed. True-SR DLSS 4X/6X cadence and XeSS temporal-on slowdown still fail;
+VFX effect creation fails before inference; generated-frame jelly comparison
+is unverified. No further speculative changes, main merge, push or shutdown.
+Full findings and commands: docs/NR_FG_FOLLOWUP_ACCEPTANCE_2026-09-21.md.
+
+## 2026-09-21 NR/FG bounded repair and acceptance
+
+Continued from plan checkpoint 09b4ad7, preserving accepted ab7979c.
+Fixed repeated lateness sampling and per-loop quantile sorting; recorded
+actual Present entry/return with host-domain lineage and signed deviation.
+No scheduler wait, downshift, resolution or runtime changes. Added offline
+natural NR quality probe/analysis and local public-API VFX prerequisite probe.
+Full evidence: docs/NR_FG_FOLLOWUP_ACCEPTANCE_2026-09-21.md.
+
+Build: scripts/build-isolated.ps1, worktree playback-nr-20260920, matching
+build directory, MSVC Release/1.4.4beta. First diagnostics build passed.
+Tests use scripts/run-short-test.ps1; 30-second cases have 95-second watchdogs,
+120-second sustained cases 180 seconds. TEMP/TMP only process-local, under
+E:/项目/Veyra/tmp/nr-fg-followup-20260921. Logs and evidence under
+E:/项目/Veyra/{logs,tests}/nr-fg-followup-20260921.
+
+SR-off UI ABBA and actual 1080p-to-4K RTX Video SR tests distinguish media
+deviation from latency. Historical 42 ms is not measured extra filter delay.
+True-SR NR+DLSS: 2X ~120, 4X/6X ~163 submissions/s with ~17 ms gaps.
+True-SR XeSS4 temporal-on remains slower than off. Both combinations remain
+unresolved; no speculative scheduling patch retained. Original-4K SR-bypass
+DLSS4 and XeSS4 temporal-on sustained tests both pass at ~240 software
+submissions/s; XeSS is SDK throughput, not measured individual intervals.
+Three 120-frame natural quality samples pass debug validation and reduce
+stable-source residual variation; no blanket fast-gameplay quality claim.
+Actual released 1.4.3 true-SR run repeatedly suppresses XeSS generation;
+its higher source FPS does not justify reverting the current gate removal.
+
+VFX 1.2.0 official cp311 wheel verified, all 17 DLLs load, CUDA sees RTX5070,
+but VideoSuperRes Create returns -2 before load/inference. One DLL-directory
+correction reproduced it. No independent denoiser added or packaged; stop
+this bounded direction. Corrected prior documentation: modes 8..11 denoise,
+16..19 skip artifact suppression. No proprietary SDK source copied to Git.
+
+Final CPU live timing and UI contracts pass (384 layout cases). Temporal-on
+transport and zoom smokes pass. Protection smoke initially fails visibility
+because its watchdog starts the parent hidden; added ShowWindow in smoke-only
+setup, preserving the real overlay assertion. Rebuild and retest pass:
+ui-protection-temporal-retest.log confirms rectangle/overlay, clear/cancel,
+master-off and dirty-draft retention. Actual professional FG selector tests
+pass normal switching and injected XeSS initialization failure recovery;
+results in final-backends/result.json and final-backends-reject/result.json.
+Final executable SHA256 is
+318C6B0F44ADFC3BD8094DFD5BA39B1570AA56C5D01E9A95BC40430DFD28BDA8.
+Optional PE stack inspection could not run: this build has no linker .map;
+do not claim it passed. No published package, main merge or shutdown.
+
+## 2026-09-21 Follow-up scope and repair plan
+
+User closed the general 1.4.3 performance investigation and assigned external
+GPU acceptance to group testers. Local RTX5070 remains the engineering gate.
+Read engine lateness sampling, temporal shader/pass, pinned Magpie VFX path,
+prior acceptance and failed FG experiments. Found the reported ~42 ms is
+absolute media-time deviation sampled after Present return, not directly added
+filter or physical screen latency; sampling identity needs verification.
+Plan: docs/NR_FG_NEXT_REPAIR_PLAN_2026-09-21.md. It covers diagnostics,
+anti-flicker quality, XeSS artifacts/cadence, conditional independent denoise
+and valid local packaging, with bounded experiments and rollback conditions.
+This turn changed documents only. No new runtime tests or performance claims,
+product changes, goal activation, package, publication or shutdown.
+
+## 2026-09-21 Bounded NR quality/performance result
+
+See docs/NR_QUALITY_PERFORMANCE_ACCEPTANCE_2026-09-21.md for final decisions,
+commands, artifacts and limitations. Tiled confirmation: 60 final source FPS,
+1 preview skip, residual GPU P95 1.042 ms versus non-tiled confirmation
+57 FPS / 71 skips / 2.023 ms. Both exit 0. The 41-frame fingerprint comparison
+is exact on the test corpus, D3D12 debug errors zero. Corrected protection/time
+handling is retained with the optional feature default off. Visual acceptance
+is still pending; no independent denoiser or universal 6X/power fix claimed.
+Final compiled shader restored in build and diagnostic staging, hash in report.
+All smoke sessions completed. No package, push or main merge.
+
+## 2026-09-21 NR quality and performance goal started
+
+Baseline bcdbfbf saved as checkpoint/pre-nr-quality-perf-20260921.
+Execution: docs/NR_QUALITY_PERFORMANCE_PLAN_2026-09-21.md. Local work only,
+NR layers excluded, NVOF default unchanged; no quality/feature reductions.
+Artifacts use E:/项目/Veyra/{tests,logs,tmp}/nr-quality-perf-20260921/.
+Keep validated improvements as commits and revert unsupported experiments.
+
+## 2026-09-21 Magpie research and released XeSS comparison
+
+See docs/MAGPIE_NR_XESS_COMPARISON_2026-09-21.md for fixed upstream commit,
+prioritized anti-flicker/denoise candidates, integration risks and ABBA evidence.
+Ran compare-xess.ps1: four 60-second p001 video tests, NR on, SR off, XeSS4x,
+all exit 0. Current two runs: zero preview skips, final SDK 240 fps; old first
+run similar, old second run had an unexplained 1994 ms return gap and 132 skips.
+No demonstrated current throughput regression; no additional rollback justified.
+Jelly/image quality and physical scanout remain unmeasured. NVOF stays default.
+Upstream DLSSNRTemporalTests passed WARP/debug-layer checks after resolving
+MSVC non-ASCII TEMP linking with relative paths in the designated E tmp folder.
+Artifacts/scripts/logs: E:/项目/Veyra/tests/corrective-audit-20260921/.
+Process tmp: E:/项目/Veyra/tmp/corrective-audit-20260921/.
+Only documentation changed this turn; no new product code/runtime/package,
+publication, drive mapping or global environment change. All tests exited.
+
+## 2026-09-21 Corrective audit of playback / NR changes
+
+Checkpoint: `checkpoint/pre-corrective-audit-20260921`; isolated branch
+`codex/playback-nr-20260920`. Findings, corrections, actual tests and unfinished
+items are in `docs/CORRECTIVE_AUDIT_2026-09-21.md`. This supersedes earlier
+overbroad acceptance claims. Build/test output is under
+`E:/项目/Veyra/build/playback-nr-20260920` and
+`E:/项目/Veyra/tests/corrective-audit-20260921`.
+User turned PS5 off; continued validation uses p001.mp4. Video reproduced
+repeated XeSS generation suppression despite successful startup/capture tests.
+No publication or shutdown is part of this corrective audit.
+
+## 2026-09-21 Complete portable rebuild and actual startup verification
+
+User requested a newly built package after the previous ad-hoc DLL copy did
+not resolve their launch failure. The earlier `dumpbin /dependents` output
+only listed imports: it did not prove loader resolution or successful launch.
+The exact executable the user launched was not established.
+
+- Rebuilt the `veyra` target in `E:/项目/Veyra/build/playback-nr-20260920`
+  with the VS x64 environment, including the pending UI preference changes.
+- Staged all six FFmpeg/dav1d DLLs from the configured
+  `C:/veyra-deps/ffmpeg-ps5-dav1d-installed` prefix, retaining the recorded
+  PS5 slice patch and checking its publisher manifest.
+- Ran `scripts/package-portable.ps1` with Version 1.4.4, label
+  `beta-retest-20260921`, explicit build/output directories and the main
+  checkout as DependencyRoot. Runtime identities, notices, shaders and
+  manifests were assembled by the packaging script; no binary source changes.
+- Deliverable: `E:/项目/Veyra/test-packages/1.4.4beta-retest-20260921/Veyra-1.4.4beta-retest-20260921-win64-portable.zip`
+  (472387048 bytes); SHA256
+  `A139D6AC11D4F907B46B66CAC941095796765D4B0F32B1756EF8E682E871DCF0`.
+- Extracted that ZIP under `E:/项目/Veyra/verify/1.4.4beta-retest-20260921`
+  and verified all 123 manifest payload hashes. From an unrelated working
+  directory with PATH restricted to Windows/System32, the extracted EXE
+  passed `--smoke-empty --smoke-seconds 3` (exit 0).
+- The same extracted EXE played the user's p001.mp4 with NR on, SR/FG off,
+  `--smoke-seconds 10`: exit 0, failed=false, frames=433, nrEvaluated=433,
+  nvofExecuted=432, processedFps=60.00. This is package startup and NR playback
+  verification, not acceptance of the outstanding capture/UI/style defects.
+- Build, package, payload verification and playback evidence:
+  `E:/项目/Veyra/logs/package-rebuild-20260921/`.
+  No push or public release performed; the archive contains no user settings.
+
+## 2026-09-21 Test-package runtime repair
+
+The manually assembled `1.4.4beta-playback-20260920` package contained the
+new application executable but omitted the FFmpeg runtime DLLs. This caused
+Windows loader error `avformat-63.dll` before the application could start.
+The package was repaired in place from the already verified beta runtime set:
+`avcodec-63.dll`, `avformat-63.dll`, `avutil-61.dll`, `swresample-7.dll`,
+`swscale-10.dll`, `dav1d.dll`, and the MSVC runtime DLLs. `dumpbin /dependents`
+now resolves the five FFmpeg imports from the same directory. No source or
+runtime binary was modified; only the test-package assembly was corrected.
+
+## 2026-09-20 Capture-start and NR panel follow-up
+
+- Fixed the physical-capture settings transaction that could wait forever for
+  the first DirectShow sample. A two-second no-first-sample deadline now hands
+  control to the existing capture recovery path and records
+  `capture-start/no first sample`, instead of leaving the engine thread in an
+  unbounded loop.
+- Changed the presentation default and v9 preference migration so output rate
+  limiting is off unless the user explicitly selects a cap. Preference files
+  now write schema 10; an old v9 `FollowDisplay` default migrates to `Off`.
+- Tightened the NR page layout: the exclusion-zone help no longer reserves a
+  large unexplained block, the master control is labelled NR denoise/enhance,
+  and the three runtime style buttons are named as the 003-inspired mappings
+  (`003自然`, `003电影`, `003高细节`). These are parameter/style mappings to
+  Veyra's current NR interface, not the closed 033 engine binary.
+- Removed `WS_EX_COMPOSITED` from the scrolling settings body and removed
+  synchronous `RDW_UPDATENOW` during layout. Controls remain individually
+  buffered, while wheel/drag/window-move repaint is asynchronous to avoid the
+  reported flashing and lag.
+
+Validation for this slice:
+
+- `veyra.exe` target built successfully with the Visual Studio environment:
+  `E:/项目/Veyra/build/playback-nr-20260920/veyra.exe`.
+- `veyra_ui_contract_tests.exe` passed (including preference round trips and
+  presentation-cap combinations).
+- `veyra_control_paint_tests.exe` and `veyra_live_timing_tests.exe` passed.
+- The all-target build remains blocked by the pre-existing missing
+  `third_party_local/amd/FidelityFX-SDK-2.3.0/.../ffx_api_loader.h` required by
+  the standalone FSR probes; this is unrelated to the application target.
+- No physical capture-card reproduction of the new no-first-sample path was
+  possible in this short slice; it is guarded by the new timeout and uses the
+  existing recovery code.
+
+## 2026-09-20 Playback/NR implementation slice
+
+Follow-up implementation on the same isolated branch:
+
+- Added a separate `nr-presets.v1` store and page-0 controls for named NR
+  presets (save/replace, apply, delete). Applying a preset copies only the NR
+  model, residual, exclusion regions and temporal-stabilization flag; it does
+  not overwrite SR, FG, pacing, colour, audio or capture settings.
+- XeFG now receives a bounded interval between accepted presents as its
+  `frameRenderTime` hint. The first/reset frame remains zero; the value is
+  clamped to 0.25–100 ms and never sleeps or queues an extra frame. This is an
+  evidence-backed timing difference from the inspected Magpie route, but still
+  needs a real XeSS A/B on the affected GPU before calling the jelly symptom
+  solved.
+- Dolby Vision P5/RPU reconstruction was explicitly deferred by the user;
+  no decoder or colour-route changes were made.
+
+The application and preset-test targets were rebuilt after these changes. The
+preset schema regression was updated to expect the current v21 file format
+(the temporal-NR field had already advanced the schema); the full preset suite
+now passes, along with the UI, subtitle and shader suites. No physical Dolby
+Vision or affected-user XeSS visual-quality test was performed.
+
+Follow-up physical capture smoke test (after the user requested a live device
+run): the connected device enumerated as `MCS 4K--T800`, not VC-007PRO. Its
+format list contains `2560x1440@60 NV12` at format index 4. Using
+`capture:0:4:-1`, NR on, SR off and XeSS 4X for roughly 15 seconds on the local
+RTX 5070, the application reported `capture=true`, `processedFps=60.00`,
+`callbackFps=59.94`, `captureDropped=1`, `failed=false`, `nrEvaluated=708`,
+`sdkPresented=2826`, `sdkGenerated=2118`, `sdkSubmitFps=240.00`; the XeSS hook
+ended with `scheduled=1412 refused=0 bypassed=0 fallbackFrames=0`. The new
+`frameRenderTimeMs` samples centered at 16.667 ms (P95 17.701 ms; one startup
+or stall outlier reached 50.313 ms). This validates live initialization,
+continuous 4X provider submission and clean teardown, not visual jelly, scanout
+cadence or a before/after image-quality comparison. Evidence is under
+`E:/项目/Veyra/tmp/playback-nr-20260920/xess-capture-package/logs/veyra-app.log`.
+
+On isolated branch `codex/playback-nr-20260920` from checkpoint commit
+`ed00218`, implemented the authorized first slice from
+`docs/PLAYBACK_SIX_ISSUE_AUDIT_PLAN_2026-09-20.md`:
+
+- Subtitle default now preserves glyph size across one/two-line cues; fitting is
+  explicit and persisted.
+- Fullscreen lock button plus Ctrl+L hides/ignores incidental mouse activity;
+  Esc/F11 exit paths remain.
+- Presentation settings persist Off/Follow-display/Custom output-rate mode and
+  default to Follow-display; a validated 1..1000 FPS custom cap is also
+  available. Follow-display resolves the active
+  monitor's Windows mode and feeds the same cap. Generated candidates that are
+  already one cap slot stale are discarded so they cannot accumulate behind a
+  slower output. The cap uses the existing cadence owner; no extra fixed delay
+  or second pacing loop was added. XeSS/FSR provider-owned swapchains report
+  the cap as unsupported rather than throttling their real-frame input.
+- Added default-off NR temporal residual stabilization with bounded two-texture
+  history, motion-vector reprojection, patch consistency rejection, reset
+  invalidation and explicit UI/config/preset persistence. This is a Veyra
+  implementation adapted from Magpie's GPLv3 motion route, with source
+  provenance retained in the audit plan; it is not yet a hardware quality gate.
+- Added the exact Magpie commit/license attribution to `THIRD_PARTY_NOTICES.md`;
+  no Magpie binary or runtime was copied.
+
+Build command (successful): CMake/Ninja target `veyra veyra_repair_shader_tests`
+with the Visual Studio x64 environment; log
+`E:/项目/Veyra/logs/playback-nr-20260920/build-temporal-env.txt`.
+`veyra_ui_contract_tests`, `veyra_subtitle_overlay_tests`,
+`veyra_subtitle_panel_tests` and `veyra_repair_shader_tests` all exited 0;
+logs are under `E:/项目/Veyra/logs/playback-nr-20260920/`.
+
+The raw fullscreen process test initially lacked app-local runtime DLLs. A
+staged copy using the existing 1.4.3 test package's app-local dependencies then
+passed `scripts/acceptance/fullscreen-lock.py`; evidence is
+`E:/项目/Veyra/tests/playback-nr-20260920/fullscreen-run-current/result.json`.
+The test did not exercise HDR output. No physical Dolby Vision, XeSS controlled
+A/B, projector refresh or affected RTX hardware test was run. No package,
+release or push was performed; the isolated build itself still does not contain
+app-local FFmpeg DLLs.
+
+## 2026-09-20 Six playback/NR requests: investigation only
+
+User requested investigation and proposals, explicitly no implementation.
+Recorded evidence, uncertainties, proposed changes and acceptance criteria in
+`docs/PLAYBACK_SIX_ISSUE_AUDIT_PLAN_2026-09-20.md`: output FPS cap, subtitle
+size changes, fullscreen lock/HDR overlays, Dolby Vision compatibility, XeSS
+warping comparison and NR styles/temporal stabilization.
+
+Read-only source/config inspection of `C:/Users/123/Desktop/033`; no package
+executable, injection script, addon or runtime loaded. Inspected Magpie GPLv3
+experimental revision `3841698348bfb246623d4acf791984c8b68a577b`, downloaded to
+`E:/项目/Veyra/downloads/magpie-six-issue-audit-20260920`. Commands included
+git clone/revision inspection, rg/Get-Content source searches and an upstream
+libplacebo colorspace header read. No source port, application build, package,
+hardware test or release. Only this plan and WORKLOG changed for this request;
+pre-existing capture discontinuity changes remain untouched. Validation:
+`git diff --check` and `git status --short`/diff inspection for documentation.
+
+## 2026-09-20 Native capture persistent discontinuity
+
+User confirmed the previous MK.2 HDR repair now has correct colors on the
+affected setup. This is user device feedback, not universal device validation.
+
+New user log `C:/Users/123/Desktop/veyra-app.log` shows continuous native YUY2
+timestamps but a discontinuity flag on every sample; FG stays in warmup.
+Checkpoint `checkpoint/pre-capture-sticky-discontinuity-20260920` at be3e2e6.
+Added a narrowly scoped persistent-flag filter in CaptureTiming.h, integrated
+callback/close in CaptureCardSource.cpp, and expanded LivePresentationTimingTests.
+Details and limitations: `docs/CAPTURE_STICKY_DISCONTINUITY_2026-09-20.md`.
+
+Validation: `scripts/build-isolated.ps1 -Root . -BuildDirectory
+E:/项目/Veyra/build/color-mixer-hue-20260920 -DependencyCache
+E:/项目/Veyra/build/frame-pacing-20260918/CMakeCache.txt -TempDirectory
+E:/项目/Veyra/tmp/capture-timeline-20260920 -Targets veyra,veyra_live_timing_tests
+-DisplayVersion 1.4.4beta`; application and regression executable build passed.
+Ran `veyra_live_timing_tests.exe`, exit 0; `git diff --check` passed.
+Logs: `E:/项目/Veyra/logs/capture-timeline-20260920/{build,timing-tests}.txt`.
+Build has existing compiler warnings. No affected capture hardware test, no
+package, no upload; SDK/runtime identities unchanged and none added to Git.
+
+## 2026-09-20 Elgato MK.2 vendor HDR control
+
+Investigated user log veyra-app(30).log and Nitlink; official Elgato support
+confirms Veyra omitted the vendor InfoFrame and card-side HDR-to-SDR switch.
+This is a concrete integration gap, not proof of the user's sole color cause.
+Checkpoint `checkpoint/pre-elgato-hdr-control-20260920` at c84eb72; branch
+`codex/capture-color-144beta-20260920`. Plan and evidence:
+`docs/ELGATO_MK2_HDR_PLAN_2026-09-20.md`.
+
+Added ElgatoHdrControl header/source, wired CaptureCardSource configure/close,
+added ElgatoHdrCases to CaptureColorContractTests/CMake; exact MK.2/P010 only.
+No shader/color formula changes. Added upstream pinned MIT provenance and
+license to notices and portable packer; refreshed beta release notes.
+
+Commands: `scripts/build-isolated.ps1 -Root . -BuildDirectory
+E:/项目/Veyra/build/color-mixer-hue-20260920 -DependencyCache
+E:/项目/Veyra/build/frame-pacing-20260918/CMakeCache.txt -TempDirectory
+E:/项目/Veyra/tmp/elgato-hdr-20260920 -Targets veyra,veyra_capture_color_tests
+-DisplayVersion 1.4.4beta` passed. Capture tests: 185 PASS, failures=0.
+Build retains pre-existing third-party warnings. No failed compilation/tests.
+Logs: `E:/项目/Veyra/logs/elgato-hdr-20260920/{build,capture-color,package,smoke}.txt`.
+
+Packaged using `scripts/package-portable.ps1 -Version 1.4.4 -Label beta-elgato
+-LocalVideoHdr` with the build above and output
+`E:/项目/Veyra/test-packages/1.4.4beta-elgato-20260920`.
+ZIP: Veyra-1.4.4beta-elgato-win64-portable.zip, 472356915 bytes,
+SHA256 EFF48396AE7E58ECECABEDD069D1158E079753042D0FC97B6D5C2DD775321994.
+Independent ZIP stream verification matches all 122 manifest payload hashes
+and sizes, including new MIT license. Publisher runtime audit and forbidden
+payload scan passed; no new runtime or SDK in source Git.
+
+`scripts/acceptance/portable-smoke.ps1` passed all seven cases (7 seconds each),
+input `E:/项目/Veyra/tests/1.4.2beta/visible-scene.mkv`, results under
+`E:/项目/Veyra/tests/elgato-hdr-20260920/portable-smoke/result.json`.
+Process TEMP/TMP redirected to task tmp. Prior beta retained for comparison.
+No MK.2 attached: actual driver Set/readback and actual HDR color remain user
+acceptance items. Live HDMI SDR/HDR changes require reconnect. Write-only
+driver original state cannot be restored; this limitation is logged. No push
+or GitHub release performed.
+
+## 2026-09-20 1.4.4beta 本地内测包
+
+在 `codex/capture-color-144beta-20260920` 接入采集卡输入色彩空间与范围选择：
+自动、Rec.2100 PQ、Rec.2100 HLG、Rec.709，以及自动/有限/完整范围。选择编码
+向后兼容旧的 0..2 值；新值在 `CaptureColorOverride.h` 中定义并经过严格校验。
+设置按 DirectShow 设备路径保存，跨格式/帧率切换与重连保留；旧 v1-v3 配置仍可读。
+原生手动 HDR 仅接受 P010/P016，压缩输入拒绝手动覆盖而继续使用码流 VUI，不再静默丢弃
+用户选择。同步包含色相分区和 hue wrap 修复。
+
+Build: `scripts/build-isolated.ps1`，`E:/项目/Veyra/build/color-mixer-hue-20260920`，
+DisplayVersion `1.4.4beta`，目标 `veyra`，exit 0。测试：`veyra_ui_contract_tests`、
+`veyra_capture_color_tests`、`veyra_color_grade_gpu_tests` 均 exit 0；日志在
+`E:/项目/Veyra/logs/capture-color-144beta-20260920/`。独立窗口检查确认颜色/范围控件
+不重叠且包含四个色彩空间、三个范围选项，截图在对应 `tests/.../dialog-window/`。
+
+便携包：`E:/项目/Veyra/test-packages/1.4.4beta/final/Veyra-1.4.4beta-win64-portable.zip`，
+472349725 bytes，SHA256 `2A2C8F37DC1F8E875B834B6072C8E7AF0B5B0052B40FDCF6A48BD72E762DA91B`。
+包内 120 个 payload 文件及 manifest 哈希通过。首次 portable-smoke 使用 4K 的 p001.mp4，
+Video SR 项未通过（`VSR creation or GPU execution missing`，`gpuSrP95Ms=0`），源与输出
+同为 4K，没有触发放大。保持原断言，改用 `tests/1.4.2beta/visible-scene.mkv` 重跑七项
+均通过，exit 0；证据在 `E:/项目/Veyra/tests/capture-color-144beta-20260920/portable-upscale/result.json`。
+对应源码使用 `scripts/package-release-source.py --version 1.4.4` 生成到同一 final 目录，
+依赖源码取自 `C:/veyra-releases/1.4.1` 并核验固定哈希；临时目录为本任务 tmp/source。
+源码包生成成功：commit `7618072`，861 个文件核验通过，215045666 bytes，
+SHA256 `84211C78E15822DC6EFB96E6692B2ECB422827AAA271654BF1FF5D4901261472`。
+首次打包失败的外层 EXE 副本清理被自动审批策略拦截，仍保留；final 为唯一交付目录。
+未进行真实 Elgato 实卡验收，未推送或发布 GitHub。
+
 ## 2026-09-20 1.4.3 publication verified
 
 Released https://github.com/Likely7/Veyra-NRVideo/releases/tag/v1.4.3 as Latest,
@@ -5229,6 +6029,31 @@ GPU full-group 观测约 NR 6.715ms、Flow 1.056ms、FG batch 10.042ms，slot CP
 4.519/16.692/17.102ms，18 个间隔超过 16.667ms，36 次 rejected→warmup；GPU
 P95 约 NR5.664ms、Flow1.265ms、FG10.659ms，slot CPU wait 仍为 0。降低 NR 分辨率
 接近但没有达到均匀固定 6X，因此仍只作为性能对照，不改变原画质验收目标。
+# NR quality/performance continuation (2026-09-21)
+
+Execution tools restored. Re-read worktree status and current plan; preserved
+uncommitted temporal changes. Analyzed existing eight power CSVs with explicit
+Import-Csv headers, Measure-Object means, and first-six/last-four sample trimming.
+Results and caveats: docs/NR_PERFORMANCE_POWER_REVIEW_2026-09-21.md. No blanket
+1.4.3 cost regression demonstrated. GPU tests from the earlier phase were read,
+not rerun or misreported as new runs.
+
+Staged existing built veyra.exe and shaders under
+E:/项目/Veyra/tests/nr-quality-perf-20260921/app, retaining unchanged dependencies.
+Ran p001.mp4 with --smoke-seconds 30 --smoke-view pro --nr --no-sr --fg-xess
+--fg-multiplier 4, off then on (--nr-temporal). Start-Process with per-process
+TEMP/TMP under E:/项目/Veyra/tmp/nr-quality-perf-20260921; 75s watchdog per run.
+Both exit0/failed=false, but temporal-on failed cadence acceptance: source
+58fps versus60, lateness P95 46.54 versus1.65ms, last previewSkipped80.
+Artifacts temporal-video-{off,on} logs in the evidence directory. Test session
+10105 exited0. One polling call mistakenly used exec-cell wait for a process
+session and returned not found; corrected to write_stdin on the same session,
+without restarting either test. No crash/error lines found in these app logs.
+
+Next: compare previous temporal-on implementation to isolate existing cost
+from new correction, then bounded optimization/revert and natural-image review.
+No implementation acceptance, release, final goal completion or shutdown.
+
 # Resize regression attribution follow-up (2026-09-20)
 
 Reviewed 2b99e89 and prior UI commits using git show/blame and source reads.
@@ -5245,3 +6070,313 @@ and leaves the previously verified resize-fix package untouched. Existing
 evidence/build paths are E:/项目/Veyra/tests/resize-hang-20260920 and
 E:/项目/Veyra/build/slider-reset-20260919; no new binary artifacts, runtime
 changes, publication or shutdown.
+# 2026-09-20 Color mixer hue coverage and circular conversion
+
+User reported weak/imprecise per-colour hue adjustments. Inspected the UI,
+CPU response bake and shared ingest shader. Fixed-radius 32-degree masks left
+only 0.01123 weight per adjacent band at the midpoint of a 60-degree gap.
+Hue-only masks now interpolate linearly between neighbouring centres on the
+ring; their weights sum to one. Existing +/-100 -> +/-30-degree centre scale
+is retained. An initial unverified +/-100-degree amplification was withdrawn.
+Saturation, brightness and B&W masks remain unchanged. Old nonzero hue presets
+can look different between band centres because the coverage bug is corrected.
+
+HsvToRgb now wraps shifted hue with frac before sector selection. Previously
+negative red shifts or values above 360 used the wrong sector. Corrected the
+old orange test's settings typo (enabled was assigned to s, not o); restored
+orange dominance coverage instead of accepting the earlier unexplained result.
+
+Build: scripts/build-isolated.ps1, build/color-mixer-hue-20260920, dependency
+cache build/frame-pacing-20260918/CMakeCache.txt, targets veyra,
+veyra_color_grade_tests and veyra_color_grade_gpu_tests, DisplayVersion 1.4.3.
+Build exited 0. CPU tests exited 0. Initial GPU launch failed with missing DLL
+(-1073741515); rerun with the configured patched FFmpeg bin on process PATH
+exited 0, including red +/- hue direction and existing real-graph regressions.
+Tests used run-short-test.ps1 with 60/120-second watchdogs. Logs are under
+E:/项目/Veyra/logs/color-mixer-hue-20260920/{cpu,gpu,gpu-runtime}.*.log;
+build and process-local tmp are under the matching E:/项目/Veyra directories.
+git diff --check passed. No PS/LR visual equivalence or user-image acceptance
+claimed; no packaging, publication, runtime changes or additional GPU pass.
+
+2026-09-21 continuation: compared the pre-existing temporal shader with the
+current correction under identical p001.mp4 settings. The correction itself
+was not promoted because temporal-on remained cadence-limited. Implemented one
+bounded groupshared 10x10 halo optimization in `shaders/NrTemporal.hlsl`.
+`temporal-gpu-accepted.log` passed the product D3D12 regression (debug clean),
+and 41 full-frame fingerprints matched the prior shader. The staged 30-second
+temporal-on smoke improved residual GPU P95 2.014 to 1.369 ms, source 58 to
+60 FPS, lateness P95 46.48 to 41.71 ms, and preview skips 67 to 1; exit 0.
+This is software timing only, not display latency or subjective quality proof.
+No independent denoiser was added because required VFX/NvCV/CUDA GPU-only
+prerequisites and distribution identity remain unavailable. No guidance or
+XeSS rollback was justified by the existing evidence. No release or shutdown.
+
+## 2026-09-21 FG architecture reassessment
+
+User cancelled further Magpie binary benchmarking and requested diagnosis and
+remedies. Reviewed active e71d715 worktree and clean Magpie fork
+3841698348bfb246623d4acf791984c8b68a577b: DLSS interop/fences, frontend FIFO,
+capacity/deadlines, XeSS source timing, Veyra admission/history recovery and
+existing matched 1.4.3 evidence. Added FG_PIPELINE_REASSESSMENT_2026-09-21.md
+with evidence boundaries, priorities and rollback criteria. Existing dirty
+experiments preserved. No product changes, benchmarks, builds, binary artifacts,
+runtime changes, publication or shutdown. Verification: git diff --check.
+
+## 2026-09-21 补帧稳定性与现有功能收尾方案
+
+按用户要求编写 FG_STABILITY_COMPLETION_PLAN_2026-09-21.md，包含证据基线、
+XeSS时间/帧对应、DLSS整组空档、输出限帧、UI/字幕/采集回归、NR防闪和独立
+降噪的分阶段方案。规定逐项存档、有限实验、全段节奏/源覆盖/帧龄/画质联合
+验收和失败回退。更新CURRENT_STATUS入口及三份旧计划的替代说明，纠正旧的
+默认限帧和XeSS时间提示结论。保留所有既有未提交代码及实验，不启动新目标、
+测试、构建或发布。本轮无新增二进制/临时产物。文档检查使用git diff --check
+及新方案的本地Markdown链接存在性校验；不将文档检查算产品验收。
+
+## 2026-09-21 FG stability: source-linked XeSS diagnostics
+
+Execution authorized after the preceding planning entry. Baseline checkpoint:
+`d2ae8ee` / `checkpoint/pre-fg-stability-20260921`; isolated branch
+`codex/fg-stability-20260921`, worktree `worktrees/playback-nr-20260920`.
+Added opt-in VEYRA_TEST_TRACE_XESS bounded Sleep/Bind/Present events,
+provider-instance/cycle IDs, and actual source identity linkage. No scheduling,
+quality, multiplier or waiting policy changes. A preparation cycle may be
+shared by multiple queued sources; mismatched preparation/presentation cycle
+numbers alone are not evidence of a bug.
+
+Build succeeded with scripts/build-isolated.ps1, targets veyra, version
+1.4.4beta, BuildDirectory E:/项目/Veyra/build/playback-nr-20260920,
+DependencyCache E:/项目/Veyra/build/frame-pacing-20260918/CMakeCache.txt,
+TempDirectory E:/项目/Veyra/tmp/fg-stability-20260921. Output was captured in
+the tool session (72 steps), not a separate build log. Existing FFmpeg
+conversion warnings remain.
+
+Ran scripts/acceptance/fg-utilization-matrix.py with --cases native-nr-xess4
+sr-nr-xess4 --seconds 20 and VEYRA_TEST_TRACE_XESS=1. EXE staging:
+E:/项目/Veyra/tests/fg-stability-20260921/app/veyra.exe; existing runtime
+files linked without replacement. Native input p001.mp4; derived input
+tests/nr-fg-followup-20260921/p001-derived1080.mp4. Both exited 0,
+failed=false. Evidence: tests/fg-stability-20260921/timeline-a/<case>/
+{stdout.log,app.log,trace.txt,result.json,telemetry.json,xess-timeline.json}.
+All relative artifact paths in this entry are under E:/项目/Veyra/.
+
+Native NR XeSS4: ~60 source submissions/s; retained source interval P99
+17.358ms, maximum40.019ms, provider Present cycle wall P95 10.436ms.
+True1080p-to4K VideoSR quality3 + NR XeSS4: ~39.98 source submissions/s;
+retained interval mean24.982ms, P99 46.754ms, max47.097ms. Of594 retained
+intervals,149 cross epoch boundaries (mean45.736ms). Present cycle wall P95
+27.941ms; XeLL Sleep P95 12.256ms. NVML device-wide GPU averages87.51%
+and69.13% respectively are not per-stage utilization or proof of headroom.
+
+Corrected the first analyzer draft, which omitted epoch boundaries and
+misleadingly reported heavy source interval mean18.033ms. Whole retained
+stream and same-epoch distributions are now separate. Trace rings overwrote
+4698/1469 records respectively; these statistics are retained tails, not full
+run or physical display measurements. Present cycle wall includes the return
+path before afterPresent, not pure GPU or exact DXGI duration. Next: distinguish
+provider scheduler waits from resource waits before selecting a candidate.
+No performance improvement accepted, publication or goal completion claimed.
+
+Follow-up: isolated real-source-PTS candidate behind
+VEYRA_TEST_XESS_SOURCE_TIMING=1, default off. Only consecutive source IDs and
+valid history supply positive PTS delta; resets/skips/unknown sources retain
+zero. Added opt-in per-provider-output return trace (no guessed source ID).
+Builds succeeded; logs/fg-stability-{source-timing,output-trace}-20260921.log.
+Repeated30s same-EXE off/on heavy XeSS4: source39.94->52.30/s,
+SDK retained return mean7.693->5.367ms, P99 23.25->18.58ms,
+process age-to-return P95 56.35->38.84ms. Under1ms burst fraction remains
+~23-24%, so no complete uniform-cadence acceptance. Native4X and native/SR2X
+candidate short smokes retain60 source/s; all exit0/failed=false.
+Evidence tests/fg-stability-20260921/{source-timing-b,output-off,output-on,
+source-timing-2x}; exact argv/hash/environment in each result.json.
+See FG_STABILITY_PROGRESS_2026-09-21.md for figures, scopes and next checks.
+Analyzer's3 synthetic tests pass; diff check passes. One combined shell
+off/on loop was policy-rejected before execution; split into independent
+invocations without the unnecessary environment removal and both completed.
+No new runtime, published package replacement, push or goal completion.
+
+Follow-up whole-run diagnostics: XessPacing.cpp adds trace-only fixed-size
+SDK-return histograms, startup5s and steady phases, release-time summaries.
+Existing context destruction precedes hook release; no new wait or scheduling
+policy. Build command unchanged (build-isolated.ps1, target veyra); exit0,
+log E:/项目/Veyra/logs/fg-stability-whole-output-20260921.log.
+Copied build-root veyra.exe to existing isolated app staging. Matrix harness
+ran sr-nr-xess4 for120s candidate,30s control,30s candidate, sequentially with
+watchdogs. Evidence E:/项目/Veyra/tests/fg-stability-20260921/whole-on120,
+whole-off30,whole-on30. Full steady mean7.701->5.383ms and P99 upper
+23.25->18.75ms; sustained candidate mean5.402ms. Maxima41.124/43.733/45.954ms
+and short-gap fraction remain poor. Source40.03->52.23/s, sustained52.09/s.
+No uniform4X acceptance or default enablement. No loss of quality established
+or claimed: synchronized visual verification remains outstanding.
+Ran ui-fg-backends.py with staged EXE, native p001.mp4, output source-timing-switch,
+--portable and candidate enabled;12 switch transactions and layout checks pass,
+exit0. TEMP/TMP scoped to E:/项目/Veyra/tmp/fg-stability-20260921.
+test-xess-timeline.py3 tests pass; git diff --check passes. No new runtime,
+delivery package, push or release. Goal remains active; P2-P6 not completed.
+
+Scheduler attribution follow-up: added caller RVA and hook-entry stamps, plus
+read-only ProviderDeadline trace behind VEYRA_TEST_TRACE_XESS. Native deadline
+unchanged; no new waiting or FG policy. Pinned upstream provenance recorded.
+Builds with existing build-isolated command exit0, logs/fg-stability-caller-trace-
+20260921.log and fg-stability-deadline-trace-20260921.log under E:/项目/Veyra.
+Sequential20s matrix runs caller-on native-nr-xess4/sr-nr-xess4 and deadline-on
+sr-nr-xess4 exit0, no smoke failure. Evidence tests/fg-stability-20260921.
+Read actual audited provider via pefile/capstone: index1 scheduler can wait
+for a fence before computing deadline. Split350 retained heavy first-index
+calls:8.375ms before deadline calculation,3.883ms after. Do not claim first
+segment is pure GPU time or remove the safety wait. Source52.24/s repeats.
+Next action changes from speculative timestamp port to fence/producer timing
+attribution. No cadence fix accepted. Analyzer4 tests pass; diff check passes.
+No package/runtime change, push or publication; goal remains active.
+
+Fence attribution follow-up: verified clean branch at512de1c before edits.
+Existing pre-work checkpoint d2ae8ee remains intact. Added opt-in completed
+fence snapshots to FrameTrace/Log/XessPacing and analyzer classification;
+corrected XessPacing.h's unverified claim of correct provider spacing.
+Same build-isolated command, target veyra, log under E:/项目/Veyra/logs/
+fg-stability-fence-trace-20260921.log, exit0. Updated only isolated app staging.
+fg-utilization-matrix.py --cases sr-nr-xess4 --seconds20 with trace and source
+timing enabled, output tests/fg-stability-20260921/fence-on; exit0.
+analyze-xess-timeline.py produced adjacent xess-timeline.json:351/351 entry
+fences pending then complete at deadline; mean8.465ms before deadline,
+3.815ms after. Source52.25/s, ageP95 38.815ms. Not isolated GPU duration.
+Both deadline-hook-switch and fence-hook-switch ui-fg-backends.py runs pass
+12 transactions,3 layout sizes, exit0. TEMP/TMP set to existing task tmp.
+test-xess-timeline.py passes5 tests. No runtime mutation, package, push or
+publication. Full acceptance and P2-P6 remain outstanding; next inspect
+producer-queue dependency before changing scheduling.
+2026-09-21 Magpie/Veyra follow-up: continued read-only source audit after syncing
+SAOG0721/Magpie experimental at 3841698. Confirmed Veyra LiveGpuScheduler executes
+present callbacks on the graph owner thread; XeSS provider waits therefore block
+the same CPU submission path. Confirmed Veyra's presentationSubmitted fence is
+before sink Present and cannot be treated as provider-consumed retirement. No code
+or runtime changed, no new performance test run. Added the resource ownership and
+bounded producer/presenter admission criteria to MAGPIE_SCHEDULING_SOURCE_AUDIT.
+
+## 2026-09-21 DLSS / XeSS runtime repair research and plan
+
+User requested a concrete repair/rewrite plan covering both providers, low and
+high multipliers, and RTX 30/40 as well as the local 5070. Audited clean b69d22c
+in worktrees/playback-nr-20260920. No product changes or new GPU measurements.
+Reused pinned Magpie 3841698 and existing acceptance traces. Verified DLSS
+per-subframe fences already exist, CPU publication occurs after graph.process,
+and the heavy baseline reports graphSubmit P95 1.663ms with slotWaitMs 0;
+therefore thread separation alone is not a demonstrated cure. Rechecked
+admission/Seed/Skip and actual history-reset requirements, including prior
+no-admission regressions. Do not repeat that failed experiment as a new fix.
+
+Read the configured Intel xess-3.0.2 FG/XeLL guides for resource reuse,
+post-Present queue ordering, frame IDs, Sleep/marker order and mandatory enabled
+XeLL while FG is enabled. FG API thread-safety does not establish XeLL API
+thread-safety. The plan requires a valid owner/marker sequence before splitting
+that path; it does not disable SDK waits or guess a history-only NGX interface.
+Read-only command availability check found wpr.exe and nvidia-smi.exe on PATH,
+not xperf/PresentMon/nsys; none was launched. Two initial rg searches used
+nonexistent SDK src/include paths or Windows glob operands; corrected by
+reading the actual inc/xell and doc paths. No generated artifacts from searches.
+
+Added FG_RUNTIME_REPAIR_PLAN_2026-09-21.md: immutable frame/resource contracts,
+bounded CPU owners, separate DLSS/XeSS scheduling, conditional GPU overlap,
+measurable cadence/age/quality gates, 2X-first acceptance, hardware boundaries,
+finite experiments and rollback. Updated CURRENT_STATUS and the older P1/P2
+entry; added global no-admission regressions to FG_EXPERIMENT_INDEX. No claimed
+90% success probability, performance improvement, 30/40 acceptance, build,
+package, runtime modification, merge, push or release. This round creates only
+tracked documentation; future artifact directories are defined in the plan.
+
+Documentation verification: git status confirmed only the five intended Markdown
+files changed; git diff --check passed (existing LF-to-CRLF notices only). Checked
+99 local Markdown links across those files with Test-Path; none missing. Final
+self-review clarified per-output versus group/scanout timing, applied frame-age
+non-regression to every load, added VRAM/slot reporting, and removed the inference
+that a failed overlap experiment alone proves an unavoidable hardware limit.
+No build or runtime test was needed for this documentation-only change.
+
+Follow-up audit against the historical experiment index found deliberate overlap in
+the proposed plan: CPU/presenter separation was an older candidate, XeSS source
+timing already has a partial candidate, and FG/Enhance overlap resembles the
+reverted NVOF/SR overlap. Added an explicit de-duplication section to the plan:
+these are not new fixes and cannot be reintroduced without a different dependency
+boundary and new evidence. The remaining new work is complete resource retirement
+(including guidance, descriptors, allocators, readback and backbuffer), XeSS
+post-Present provider retirement, and separate history/display state accounting.
+
+## 2026-09-21 Failed FG experiment cleanup
+
+Removed executable remnants of two rejected scheduling experiments. The production
+`captureReplayDisableFgAdmissionForTest` option and its save/restore path are gone;
+capture/replay now always uses the production DLSS admission policy. The
+`--overload-baseline` integration-test mode and its comparison-only assertions were
+removed, while the normal `--overload` test still verifies admission skips under
+load. The rejected `VEYRA_TEST_OVERLAP_VIDEO_SR` path was removed from
+`EnhanceGraph`, restoring the serialized NVOF -> Video SR order. History remains in
+`FG_EXPERIMENT_INDEX_2026-09-21.md`, but no executable switch remains to repeat
+either failed direction.
+
+Verification: repository-wide search found no references to the removed option,
+baseline flag, overlap environment variable, or overlap locals. `git diff --check`
+passed. Build and focused integration-test results are recorded below after running
+them; no runtime, package, merge, push, or release was performed.
+
+The first focused `--overload` run completed the playback/resource checks but
+reported zero FG candidates on the available local media/runtime, so an attempted
+assertion that an admission skip must be nonzero was removed as an invalid
+environment-dependent test requirement. This does not count as FG runtime
+acceptance; it only verifies the cleanup build and the normal replay path.
+
+## 2026-09-21 RTX5090 P010 capture feedback: accepted CPU upload improvement
+
+Checkpoint `3953bff`; isolated branch `codex/5090-capture-fg-20260921` in
+`E:/项目/Veyra/worktrees/playback-nr-20260920`. Supplied log analysis and complete
+results: `docs/RTX5090_CAPTURE_FG_REPAIR_2026-09-21.md`. The log loses throughput
+after native4K quality-flow selection; 999/1000 FG admissions were accepted,
+so the evidence does not support blaming mass admission rejection here.
+
+Removed redundant same-format CPU P010/P016 staging in EnhanceGraph. Matching
+NV12/P010/P016 now upload exact rows once; luma analysis uses CPU source data.
+Added CpuYuvUploadTests/CMake target and optional runtime path argument to the
+existing FgPresentationTests, avoiding runtime artifacts in the source tree.
+
+Build command (targets built across two invocations):
+
+```powershell
+./scripts/build-isolated.ps1 -Root 'E:/项目/Veyra/worktrees/playback-nr-20260920' -BuildDirectory 'E:/项目/Veyra/build/1.4.4-xess-current-20260921-r1' -DependencyCache 'E:/项目/Veyra/build/1.4.4-xess-current-20260921-r1/CMakeCache.txt' -TempDirectory 'E:/项目/Veyra/tmp/5090-capture-fg-20260921' -Targets @('veyra','veyra_cpu_yuv_upload_tests','veyra_hdr_color_tests','veyra_fg_sustained_tests','veyra_live_presentation_tests','veyra_fg_presentation_tests')
+```
+
+Build succeeded with existing dependency/FFmpeg warnings. Runtime test processes
+use the same task TEMP/TMP and the patched FFmpeg bin on PATH. After the user
+closed their app, ran the saved baseline and current CPU upload executable twice
+each, no arguments; all exit 0. P010 median 2.39/2.44 -> 0.98/0.93 ms; 18 GPU
+pixel hashes match exactly each round. NV12 unchanged. These are isolated CPU
+upload measurements, not capture/FG or screen-latency measurements. The earlier
+concurrent baseline is excluded. `veyra_hdr_color_tests.exe` without arguments
+passed; it does not test actual HDR model execution.
+
+```powershell
+python scripts/acceptance/fg-utilization-matrix.py --exe 'E:/项目/Veyra/tests/5090-capture-fg-20260921/app/veyra.exe' --native 'E:/项目/Likely7 个人账号/Deepseek Grok/p001.mp4' --derived 'E:/项目/Veyra/tests/nr-fg-followup-20260921/p001-derived1080.mp4' --output 'E:/项目/Veyra/tests/5090-capture-fg-20260921/sustained' --temp 'E:/项目/Veyra/tmp/5090-capture-fg-20260921' --cases native-nr-dlss2 native-nr-dlss6 native-nr-xess4 --seconds 60
+```
+
+All three runs exit 0. Original4K file input, realtime1080 NR, balanced flow;
+hardware import bypasses the changed CPU upload. DLSS2 tail120 FPS; DLSS6
+tail298 FPS but P99 16.8ms and incomplete360 target; XeSS4 real input60 and SDK
+4-output groups, not a measured uniform240 scanout. Another matrix command with
+`--output .../nr-only --cases native-nr-dlss1 --seconds 35` passed. Two FG runs
+showed ~31ms wall-time stalls in NR Evaluate at frame605; NR-only did not exceed
+the30ms logging threshold. No proven periodic timer or root cause, no speculative
+NR/runtime mutation. Missing exploratory src/player, src/render, src/app and
+runtime_local/nvidia paths were corrected by inspecting the actual tree/runtime;
+these failed read-only queries did not change files.
+
+```powershell
+& 'E:/项目/Veyra/build/1.4.4-xess-current-20260921-r1/veyra_fg_presentation_tests.exe' 'E:/项目/Veyra/tests/5090-capture-fg-20260921/presentation' 'E:/项目/Veyra/tests/5090-capture-fg-20260921/app/runtime/experimental'
+```
+
+Exit0; DLSS4/6/4 generated114/190/114, checked pixel error0, D3D12 errors0;
+includes resize, reset and producer/consumer retirement checks. Not an HDR
+under-target flicker reproduction. Other built test binaries were not separately
+executed and are not counted as passed tests.
+
+Artifacts remain under `E:/项目/Veyra/tests/5090-capture-fg-20260921/` and
+`E:/项目/Veyra/tmp/5090-capture-fg-20260921/`; existing isolated build reused.
+Retained baseline executable/logs and one runnable fixed staging app; no ZIP,
+portable duplication, runtime mutation, proprietary Git files, merge, push or
+release. 5090 live acceptance, 15-second hitch and user flicker remain unresolved.

@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace veyra::diagnostics {
-enum class TraceKind { Submitted, Ready, Present, Gpu, Reset, Cancelled, FrameReady, Discarded };
+enum class TraceKind { Submitted, Ready, Present, Gpu, Reset, Cancelled, FrameReady, Discarded, XessSleep, XessBind, XessPresent, ProviderOutput, ProviderDeadline };
 inline const char* traceKindName(TraceKind kind) {
     switch(kind){
     case TraceKind::Submitted:return "Submitted";
@@ -16,6 +16,11 @@ inline const char* traceKindName(TraceKind kind) {
     case TraceKind::Cancelled:return "Cancelled";
     case TraceKind::FrameReady:return "FrameReady";
     case TraceKind::Discarded:return "Discarded";
+    case TraceKind::XessSleep:return "XessSleep";
+    case TraceKind::XessBind:return "XessBind";
+    case TraceKind::XessPresent:return "XessPresent";
+    case TraceKind::ProviderOutput:return "ProviderOutput";
+    case TraceKind::ProviderDeadline:return "ProviderDeadline";
     }
     return "Unknown";
 }
@@ -28,6 +33,20 @@ struct FrameTraceEvent {
     TraceKind kind=TraceKind::Submitted;
     uint32_t detail=0,count=0;
     double milliseconds=0;
+    // Populated for Present only. All host stamps use the same monotonic clock;
+    // GPU readiness is CPU-observed, never physical display completion.
+    int64_t decodedHost=0,processHost=0,readyHost=0,presentBeginHost=0,presentEndHost=0;
+    double entryDeviationMs=0,returnDeviationMs=0;
+    uint32_t queueDepth=0;
+    bool mediaDeviationValid=false;
+    // Provider instance disambiguates cycles across rebuilds. A preparation
+    // cycle is not a source ID; several queued sources can share it.
+    uint64_t providerInstance=0;
+    uint32_t providerCycle=0,preparationCycle=0;
+    uint32_t providerCallerRva=0;
+    int64_t providerScheduleBeginHost=0;
+    bool providerFenceSampled=false;
+    uint64_t providerFenceBefore=0,providerFenceAtDeadline=0,providerFenceTarget=0;
 };
 // Owned by the logger, independent of the deduplicated error history. No
 // allocation, formatting or disk I/O occurs when an event is recorded.

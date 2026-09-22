@@ -6,6 +6,8 @@
 
 #include <format>
 #include <chrono>
+#include <vector>
+#include <mutex>
 
 #include "veyra/Log.h"
 #include "veyra/diagnostics/CpuStallTrace.h"
@@ -20,14 +22,70 @@ const wchar_t* kWindowClassName = L"VeyraPresentSink";
 } // namespace
 
 bool PresentSink::hdrDisplayActive(HWND window){
+    return queryHdrDisplayActive(window).value_or(false);
+}
+
+std::optional<bool> PresentSink::queryHdrDisplayActive(HWND window,HMONITOR* queriedMonitor){
     const auto monitor=MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST);
-    ComPtr<IDXGIFactory1> factory;if(FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))return false;
-    for(UINT a=0;;++a){ComPtr<IDXGIAdapter1> adapter;if(factory->EnumAdapters1(a,&adapter)==DXGI_ERROR_NOT_FOUND)break;if(!adapter)break;
-        for(UINT i=0;;++i){ComPtr<IDXGIOutput> output;if(adapter->EnumOutputs(i,&output)==DXGI_ERROR_NOT_FOUND)break;if(!output)break;
-            ComPtr<IDXGIOutput6> advanced;if(FAILED(output.As(&advanced)))continue;DXGI_OUTPUT_DESC1 desc{};
-            if(SUCCEEDED(advanced->GetDesc1(&desc))&&desc.Monitor==monitor)return desc.ColorSpace==DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+    if(queriedMonitor)*queriedMonitor=monitor;
+    if(!monitor)return std::nullopt;
+    static ComPtr<IDXGIFactory1> cachedFactory;static std::mutex factoryMutex;
+    ComPtr<IDXGIFactory1> factory;
+    {
+        std::lock_guard lock(factoryMutex);
+        if(cachedFactory&&!cachedFactory->IsCurrent())cachedFactory.Reset();
+        if(!cachedFactory){
+            const auto hr=CreateDXGIFactory1(IID_PPV_ARGS(&cachedFactory));
+            if(FAILED(hr)){log::warn("display-color",std::format("CreateDXGIFactory1 query failed hr=0x{:X}",unsigned(hr)));cachedFactory.Reset();return std::nullopt;}
         }
-    }return false;
+        factory=cachedFactory;
+    }
+    HRESULT hr=S_OK;
+    for(UINT a=0;;++a){
+        ComPtr<IDXGIAdapter1> adapter;hr=factory->EnumAdapters1(a,&adapter);
+        if(hr==DXGI_ERROR_NOT_FOUND)break;
+        if(FAILED(hr)){log::warn("display-color",std::format("EnumAdapters1 query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+        for(UINT i=0;;++i){
+            ComPtr<IDXGIOutput> output;hr=adapter->EnumOutputs(i,&output);
+            if(hr==DXGI_ERROR_NOT_FOUND)break;
+            if(FAILED(hr)){log::warn("display-color",std::format("EnumOutputs query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+            DXGI_OUTPUT_DESC basic{};hr=output->GetDesc(&basic);
+            if(FAILED(hr)){log::warn("display-color",std::format("GetDesc query failed hr=0x{:X}",unsigned(hr)));continue;}
+            if(basic.Monitor!=monitor)continue;
+            ComPtr<IDXGIOutput6> advanced;hr=output.As(&advanced);
+            // An older output interface cannot expose HDR. Other failures
+            // leave the previously established output contract untouched.
+            if(hr==E_NOINTERFACE)return false;
+            if(FAILED(hr)){log::warn("display-color",std::format("IDXGIOutput6 query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+            DXGI_OUTPUT_DESC1 desc{};hr=advanced->GetDesc1(&desc);
+            if(FAILED(hr)){log::warn("display-color",std::format("GetDesc1 query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+            if(desc.Monitor!=monitor)return std::nullopt;
+            return desc.ColorSpace==DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+        }
+    }
+    return std::nullopt;
+}
+
+double PresentSink::displayRefreshFps(HWND window){
+    MONITORINFOEXW mi{};mi.cbSize=sizeof(mi);
+    const auto monitor=MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST);
+    if(!monitor||!GetMonitorInfoW(monitor,&mi))return 0;
+    UINT32 pathCount=0,modeCount=0;
+    if(GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS,&pathCount,&modeCount)==ERROR_SUCCESS){
+        std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+        std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+        if(QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS,&pathCount,paths.data(),&modeCount,modes.data(),nullptr)==ERROR_SUCCESS){
+            for(UINT32 i=0;i<pathCount;++i){const auto& path=paths[i];
+                DISPLAYCONFIG_SOURCE_DEVICE_NAME name{};name.header.type=DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;name.header.size=sizeof(name);name.header.adapterId=path.sourceInfo.adapterId;name.header.id=path.sourceInfo.id;
+                if(DisplayConfigGetDeviceInfo(&name.header)==ERROR_SUCCESS&&wcscmp(name.viewGdiDeviceName,mi.szDevice)==0&&path.targetInfo.refreshRate.Denominator&&path.targetInfo.refreshRate.Numerator)
+                    return double(path.targetInfo.refreshRate.Numerator)/path.targetInfo.refreshRate.Denominator;
+            }
+        }
+    }
+    DEVMODEW mode{};mode.dmSize=sizeof(mode);
+    if(!EnumDisplaySettingsExW(mi.szDevice,ENUM_CURRENT_SETTINGS,&mode,0)||mode.dmDisplayFrequency==0)return 0;
+    // Older/remote drivers may expose only the integer fallback.
+    return double(mode.dmDisplayFrequency);
 }
 
 PresentSink::~PresentSink()
@@ -188,7 +246,7 @@ bool PresentSink::initialize(ID3D12Device* device, ID3D12CommandQueue* queue,
         for(auto& b:backBuffers_)b.Reset();
         swapChain_.Reset();
         xess_=std::make_unique<XessPresenter>();
-        if(!xess_->initialize(device,queue,factory_.Get(),hwnd_,scd,swapChain_.GetAddressOf(),desc.fgMultiplier)){
+        if(!xess_->initialize(device,queue,factory_.Get(),hwnd_,scd,swapChain_.GetAddressOf(),desc.fgMultiplier,desc.xessLowLatencySleep)){
             // XeSS is an optional experimental presenter. A missing or
             // incompatible local runtime must not prevent basic playback.
             log::warn("present", "XeSS FG initialization failed; falling back to native presentation");
@@ -252,6 +310,9 @@ bool PresentSink::initialize(ID3D12Device* device, ID3D12CommandQueue* queue,
         if(!configurePacing(false,desc.vsync))log::warn("pacing","baseline latency configuration failed; playback remains available");
     }
     tearingSupported_=tearingSupported_&&(actual.Flags&DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)!=0;
+    displayRefreshHz_=displayRefreshFps(hwnd_);
+    frameStatisticsBaseValid_=false;
+    log::info("display-refresh",std::format("monitor refresh={:.3f} Hz at swapchain creation (0 = unknown); submissions above this rate cannot all be scanned out",displayRefreshHz_));
     log::info("present", std::format("present-sink: window {}x{} swapEffect={} buffers=3 vsync={} tearing={} captureCompatible={} (capture not verified)",
         width_, height_, actual.SwapEffect==DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL?"flip-sequential":"flip-discard", desc_.vsync ? 1 : 0, tearingSupported_ ? 1 : 0, desc.captureCompatible));
     return true;
@@ -375,6 +436,34 @@ bool PresentSink::present(Status& status)
     return false;
 }
 
+PresentSink::FrameStatisticsDelta PresentSink::sampleFrameStatistics(){
+    FrameStatisticsDelta delta;
+    if(!swapChain_)return delta;
+    DXGI_FRAME_STATISTICS stats{};
+    delta.result=swapChain_->GetFrameStatistics(&stats);
+    // DXGI_ERROR_FRAME_STATISTICS_DISJOINT: mode change or first frames; a
+    // proxy swapchain may also refuse the query. Restart the baseline.
+    if(FAILED(delta.result)){frameStatisticsBaseValid_=false;return delta;}
+    if(frameStatisticsBaseValid_){
+        delta.supported=true;
+        delta.presents=presentCount_-frameStatisticsBasePresents_;
+        // PresentCount is the one that counts frames the display actually
+        // showed. PresentRefreshCount is a vblank index: its delta is just the
+        // refresh count, so using it as "displayed" made every configuration
+        // look like it displayed exactly refreshHz frames and made
+        // refreshes-displayed structurally zero (bug found 2026-09-22).
+        delta.displayed=uint64_t(stats.PresentCount-frameStatisticsBaseDisplayed_);
+        delta.displayedRefresh=uint64_t(stats.PresentRefreshCount-frameStatisticsBasePresentRefresh_);
+        delta.refreshes=uint64_t(stats.SyncRefreshCount-frameStatisticsBaseSyncRefresh_);
+    }
+    frameStatisticsBaseValid_=true;
+    frameStatisticsBasePresents_=presentCount_;
+    frameStatisticsBaseDisplayed_=stats.PresentCount;
+    frameStatisticsBasePresentRefresh_=stats.PresentRefreshCount;
+    frameStatisticsBaseSyncRefresh_=stats.SyncRefreshCount;
+    return delta;
+}
+
 bool PresentSink::configurePacing(bool enabled,bool vsync){
     // XeSS owns pacing, but its proxy accepts DXGI VSync independently.
     // Do not install another latency waiter on the provider swap chain.
@@ -443,6 +532,7 @@ void PresentSink::resize(uint32_t width, uint32_t height)
     bufferExtentW_ = width_;
     bufferExtentH_ = height_;
     pendingResize_ = true;
+    frameStatisticsBaseValid_=false;
     log::info("present", std::format("present-sink: resized to {}x{}", width_, height_));
 }
 

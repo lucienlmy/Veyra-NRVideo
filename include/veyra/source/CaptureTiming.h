@@ -1,7 +1,26 @@
 #pragma once
 #include "veyra/pipeline/FramePacket.h"
 #include <limits>
+#include <cmath>
 namespace veyra::source {
+class CaptureDriverDiscontinuity {
+    unsigned continuousFlags_=0;
+public:
+    void reset(){continuousFlags_=0;}
+    bool observe(bool flagged,bool native,bool completeTime,bool havePrevious,
+                 double ptsDelta,double arrivalDelta,double nominalFps){
+        // Some raw-video drivers leave the flag set on every sample. Only
+        // discount a sustained flag when both clocks demonstrate normal cadence.
+        const double interval=nominalFps>0?1.0/nominalFps:0;
+        const bool continuous=native&&completeTime&&havePrevious&&interval>0&&
+            std::isfinite(ptsDelta)&&std::isfinite(arrivalDelta)&&
+            ptsDelta>=interval*.5&&ptsDelta<=interval*1.5&&
+            arrivalDelta>0&&arrivalDelta<=interval*2.5;
+        if(!flagged||!continuous){reset();return flagged;}
+        if(continuousFlags_<3)++continuousFlags_;
+        return continuousFlags_<3;
+    }
+};
 inline bool captureDiscontinuity(bool pending,bool retained,bool driver,bool havePrevious,
                                  double previous,double current,double nominalFps){
     const double maxGap=nominalFps>0?2.5/nominalFps:0.1;

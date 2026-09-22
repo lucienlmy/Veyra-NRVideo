@@ -106,6 +106,7 @@ struct EnhancementSettings {
     bool nr=false,sr=false;
     bool lowLatency=false; // preview only: NR before SR, opt-in
     NrRuntime nrRuntime=NrRuntime::Original;
+    bool nrTemporal=false; // optional motion-reprojected residual stabilization
     bool captureCompatible=false;
     // Capture audio ingress; requires a reconnect to take effect (the media type
     // is negotiated when the graph is built).

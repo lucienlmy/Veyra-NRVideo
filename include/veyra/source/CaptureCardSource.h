@@ -1,12 +1,13 @@
 #pragma once
 #include "veyra/source/IFrameSource.h"
+#include "veyra/source/CaptureColorOverride.h"
+#include "veyra/source/CaptureFormatSelection.h"
 #include <memory>
 #include <string_view>
 #include <vector>
 #include "veyra/sink/CaptureAudioSession.h"
 #include "veyra/source/AudioInputRecovery.h"
 namespace veyra::source {
-struct CaptureFormat {int index=0;unsigned width=0,height=0;double fps=0;std::wstring label;std::wstring key;int rank=0;int tier=0;};
 struct CaptureDevice {
     std::wstring name;
     // DirectShow moniker DevicePath/display name. This is stable across a
@@ -30,7 +31,7 @@ public:
     static std::vector<CaptureDevice> deviceDetails(bool audio=false);
     static std::vector<std::wstring> devices(bool audio=false);
     static std::wstring makeCapturePath(unsigned videoIndex,const CaptureDevice& video,
-        int format,int audioMode,const CaptureDevice* audio,unsigned colorOverride=0,double requestedFps=0);
+        int format,int audioMode,const CaptureDevice* audio,unsigned colorOverride=0,double requestedFps=0,std::wstring_view formatKey={});
     static std::vector<CaptureFormat> formats(unsigned device);
     static std::vector<CaptureFormat> formatsByPath(std::wstring_view devicePath);
     bool open(const SourceOpenDesc&)override;
@@ -64,6 +65,10 @@ public:
     const std::wstring& errorMessage()const{return error_;}
     SourceReadStatus read(pipeline::FramePacket&,const AVFrame**)override;
     SourceReadStatus tryRead(pipeline::FramePacket&,const AVFrame**);
+    // Auto-reset event signalled after each delivered sample; lets the graph
+    // owner wait on "frame or deadline" instead of a fixed 1 ms timer slice.
+    // Null until configure(); the handle stays valid until close().
+    HANDLE frameEvent()const;
     bool seek(const pipeline::Rational&)override{return false;}
     void close()noexcept override;
 private:

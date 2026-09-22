@@ -43,13 +43,14 @@ int wmain(int argc,wchar_t** argv){
         const std::wstring_view effects=argv[6];
         settings.nr=effects==L"on"||effects==L"nr";
         settings.sr=effects==L"on"||effects==L"sr";
+        settings.nrTemporal=GetEnvironmentVariableW(L"VEYRA_TEST_NR_TEMPORAL",nullptr,0)>0;
+        veyra::log::info("test",std::string("NR temporal=")+(settings.nrTemporal?"on":"off"));
         if(liveProfile){settings.flow=FlowQuality::Performance;settings.videoSrQuality=0;settings.srTarget=veyra::pipeline::SrTarget::Uhd4K;}
         if(nr900Profile)settings.nrPolicy=veyra::pipeline::NrSizePolicy::P900;
         if(nr720Profile)settings.nrPolicy=veyra::pipeline::NrSizePolicy::P720;
         auto options=PlayerOptions::from(settings);
         const std::wstring source=argv[1];
         options.captureReplayForTest=!fileProfile&&!source.starts_with(L"capture:")&&!source.starts_with(L"capture2:");
-        options.captureReplayDisableFgAdmissionForTest=std::wstring_view(argv[4])==L"off";
         engine.open(window,source,options);
         const auto opened=Clock::now();auto started=Clock::time_point{};
         int reported=-1;bool stalled=false,cleared=false;
@@ -81,7 +82,7 @@ int wmain(int argc,wchar_t** argv){
                     for(const auto stage:{veyra::diagnostics::GpuStage::Nr,veyra::diagnostics::GpuStage::Sr,veyra::diagnostics::GpuStage::Flow,veyra::diagnostics::GpuStage::FgBatch})
                         std::cout<<" gpu"<<int(stage)<<"="<<f.gpuTiming[size_t(stage)].p95.value_or(-1);
                     std::cout<<std::endl;
-                    if(elapsed>=22){recoveredRate+=f.presentSubmitFps;++recoveredSamples;}
+                    if(elapsed>=22){recoveredRate+=xessProfile?f.xessSdkSubmitFps:f.presentSubmitFps;++recoveredSamples;}
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -92,6 +93,7 @@ int wmain(int argc,wchar_t** argv){
         const double mean=recoveredSamples?recoveredRate/recoveredSamples:0;
         const bool throughput=minimumRatio<=0||(recoveredSamples&&mean>=s.nominalSourceFps*multiplier*minimumRatio);
         std::cout<<"SUSTAINED lifecycle="<<ok<<" recoveredMeanSubmitFps="<<mean
+            <<" rateSource="<<(xessProfile?"xess-provider":"app")
             <<" minimumTargetRatio="<<minimumRatio<<" throughput="<<throughput
             <<" nominalTarget="<<s.nominalSourceFps*multiplier<<" frames="<<s.frames<<" generated="<<s.generated<<std::endl;
         ok=ok&&throughput;

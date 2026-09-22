@@ -34,11 +34,19 @@ class FgRecoveryBudget {
 public:
     void reset(){base_.clear();fg_.clear();warmup_.clear();limited_=false;recoveryPairs_=0;}
     void fgCost(double ms,int64_t now){add(fg_,now,ms);}
-    void complete(std::optional<double> measuredMs,bool evaluated,bool warmup,int64_t now,std::optional<double> measuredFg={}){
+    // fgCostComparable=false marks a group whose FG stage did less work than a
+    // full group (a reduced 2X group): its FG time must not lower the
+    // full-group FG estimate. Its BASE cost is still recorded - the base work
+    // is per source frame and does not depend on the multiplier. Excluding the
+    // base cost too starved the model: with ~40% of groups reduced, base_ and
+    // fg_ only ever saw the expensive full groups, the estimate stayed high,
+    // more groups were rejected, and more reductions followed (measured
+    // 2026-09-22: full admissions halved, 550 -> 348, net -10% presented).
+    void complete(std::optional<double> measuredMs,bool evaluated,bool warmup,int64_t now,std::optional<double> measuredFg={},bool fgCostComparable=true){
         // Missing GPU timestamps are unknown, not CPU polling delay. Let old
         // samples expire; admission still checks each batch's real deadline.
         if(warmup){if(evaluated&&measuredMs)add(warmup_,now,*measuredMs);return;}
-        if(evaluated&&measuredFg)fgCost(*measuredFg,now);
+        if(evaluated&&measuredFg&&fgCostComparable)fgCost(*measuredFg,now);
         if(!measuredMs)return;
         const double ms=*measuredMs;
         const auto extra=evaluated?(measuredFg?measuredFg:p95(fg_,now,20000000)):std::optional<double>(0);
@@ -87,6 +95,17 @@ public:
         // The first output must be reachable too: the last deadline alone can
         // admit a whole MFG group whose early outputs are already doomed.
         return recordAdmission(fits(firstDeadline,*base+*firstFgMs)&&fits(lastDeadline,*whole));
+    }
+    // Reduced-group affordability: base work plus ONE measured first
+    // interpolation must reach the pair midpoint. Does not touch recovery
+    // state; the caller decides between Reduced and Seed/Skip.
+    bool canAdmitReduced(int64_t now,int64_t midpointDeadline,int64_t outputInterval,double elapsed,double present,std::optional<double> firstFgMs,double queuedMs)const{
+        const auto base=baseCost(now);
+        if(!base||!firstFgMs||!std::isfinite(*firstFgMs)||*firstFgMs<0)return false;
+        const double queued=std::isfinite(queuedMs)?std::max(0.0,queuedMs):0.0;
+        const double progress=std::clamp(elapsed,0.0,queued+*base);
+        const double grace=double(std::max<int64_t>(0,outputInterval))/10000;
+        return double(midpointDeadline-now)/10000+grace>=std::max(0.0,queued+*base+*firstFgMs-progress)+std::max(0.0,present);
     }
     bool recovering()const{return limited_&&recoveryPairs_>0;}
 };

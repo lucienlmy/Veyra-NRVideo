@@ -16,7 +16,20 @@ extern "C" {
 #include <libavutil/mastering_display_metadata.h>
 }
 
+#include <thread>
+#include <algorithm>
 namespace veyra::source {
+namespace {
+// File playback software decode: frame threading up to four workers regardless
+// of resolution (1080p60 H.264/HEVC on one thread fell below real time when
+// hardware decode was unavailable, sweep 2026-09-22 C2). Live capture keeps
+// its own low-latency single-thread policy in CaptureCompressedDecoder.
+unsigned softwareDecodeThreads(int, int) {
+    const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+    return std::clamp(cores / 2u, 2u, 4u);
+}
+}
+
 
 namespace {
 
@@ -36,11 +49,16 @@ MediaFileSource::~MediaFileSource()
 
 bool MediaFileSource::fallbackToSoftware(std::string_view reason)
 {
-    if (!decoder_.hardwareActive() || framesRead_ != 0 || path_.empty()) {
+    if (!decoder_.hardwareActive() || path_.empty()) {
         return false;
     }
+    // Mid-stream failures (driver/pool errors after frames were delivered)
+    // reopen in software and seek back to the last delivered PTS; the caller
+    // sees a Discontinuity flag so temporal history resets (sweep B5).
+    const bool midStream = framesRead_ != 0;
+    const int64_t resumeUs = lastPtsUs_;
     veyra::log::warn("source-file", std::format(
-        "D3D12VA first-frame fallback to software reason={} path=redacted", reason));
+        "D3D12VA {} fallback to software reason={} path=redacted resumeUs={}", midStream ? "mid-stream" : "first-frame", reason, resumeUs));
     decoder_.close();
     demuxer_.close();
     if (!demuxer_.open(path_)) {
@@ -49,11 +67,20 @@ bool MediaFileSource::fallbackToSoftware(std::string_view reason)
     }
     const auto* params = demuxer_.videoCodecParameters();
     if (params == nullptr || !decoder_.openSoftware(params, demuxer_.videoTimeBaseNum(),
-            demuxer_.videoTimeBaseDen(), params->width > 1920 || params->height > 1080 ? 4u : 1u)) {
+            demuxer_.videoTimeBaseDen(), softwareDecodeThreads(params->width, params->height))) {
         veyra::log::error("source-file", "software fallback decoder open failed");
         return false;
     }
     info_.hardwareDecodeActive = false;
+    if (midStream && resumeUs != INT64_MIN) {
+        if (!demuxer_.seekToUs(std::max<int64_t>(0, resumeUs))) veyra::log::warn("source-file", "software fallback could not seek back; continuing from stream start");
+        decoder_.flushBuffers();
+        // The engine treats Seek as a hard history reset; frames before the
+        // resume point are dropped by the caller's discardBefore logic.
+        pendingSeekFlag_ = true;
+        lastPtsUs_ = INT64_MIN;
+        ++epoch_;
+    }
     info_.videoDecodePath = "software";
     info_.containerName = demuxer_.formatName();
     info_.videoPixelFormatName = params->format >= 0 && av_get_pix_fmt_name(static_cast<AVPixelFormat>(params->format))
@@ -170,7 +197,7 @@ bool MediaFileSource::open(const SourceOpenDesc& desc)
     }
     if (!decoderOpen) {
         decoderOpen = decoder_.openSoftware(params, demuxer_.videoTimeBaseNum(),
-            demuxer_.videoTimeBaseDen(), params->width>1920||params->height>1080?4u:1u);
+            demuxer_.videoTimeBaseDen(), softwareDecodeThreads(params->width, params->height));
     }
     if (!decoderOpen) {
         veyra::log::error("source-file", "decoder open failed");
@@ -304,8 +331,17 @@ SourceReadStatus MediaFileSource::read(pipeline::FramePacket& out, const AVFrame
     out.sequence = sequence_;
     const int tbNum = decoder_.frameTimeBaseNum();
     const int tbDen = decoder_.frameTimeBaseDen();
-    if (frame->pts != AV_NOPTS_VALUE && tbDen > 0) {
-        out.pts = pipeline::Rational{frame->pts * static_cast<int64_t>(tbNum), tbDen};
+    // Prefer the container PTS; fall back to FFmpeg's best-effort estimate and
+    // finally the packet DTS. Raw elementary streams and some TS/AVI muxes
+    // leave pts unset on individual frames, which used to stop playback
+    // outright (sweep 2026-09-22 B4). Still never invent a value.
+    const int64_t stamp = frame->pts != AV_NOPTS_VALUE ? frame->pts
+        : frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp
+        : frame->pkt_dts;
+    if (stamp != AV_NOPTS_VALUE && tbDen > 0) {
+        out.pts = pipeline::Rational{stamp * static_cast<int64_t>(tbNum), tbDen};
+        if (frame->pts == AV_NOPTS_VALUE && (ptsFallbacks_++ % 300) == 0)
+            veyra::log::info("source-file", std::format("frame pts missing; using {} (count={})", frame->best_effort_timestamp != AV_NOPTS_VALUE ? "best_effort_timestamp" : "pkt_dts", ptsFallbacks_));
     } else {
         out.pts = pipeline::Rational::unknown(); // never fabricate a timestamp
     }

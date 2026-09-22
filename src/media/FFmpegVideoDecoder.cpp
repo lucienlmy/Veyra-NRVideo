@@ -640,7 +640,9 @@ bool FFmpegVideoDecoder::sendPacket(const AVPacket* packet)
     int result = avcodec_send_packet(context_, packet);
     while (result == AVERROR(EAGAIN)) {
         ++stats_.packetRetries;
-        if (bufferedFrames_.size() >= 16) {
+        // Bound: each buffered frame pins a decoder pool surface on the
+        // hardware paths (pool ~20); keep well below it (sweep 2026-09-22 C9).
+        if (bufferedFrames_.size() >= (hardwareActive() ? 8u : 16u)) {
             log::error("media", "decoder: output queue full; caller must consume frames before sending more input");
             return false;
         }

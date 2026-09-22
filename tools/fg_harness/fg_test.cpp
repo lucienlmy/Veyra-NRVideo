@@ -362,8 +362,12 @@ void copyUploadToTexture(ID3D12GraphicsCommandList* list, ID3D12Resource* dst,
 
 // Diagnostic readback only: isolate the NGX backend from graph scheduling,
 // pool ownership, source conversion and optical-flow estimation.
+// alternateGroups: per-frame multiFrameCount 5,1,5,1,... WITHOUT reset,
+// to learn whether a pair over budget may run a smaller group and keep
+// history (F3 precondition, review 2026-09-22). Position/uniqueness checks
+// apply to every generated frame; group 1 expects the midpoint.
 static bool runPlanarSix(veyra::gfx::CommandSlotRing& ring,
-    veyra::ngx::NgxCoreHost& core, NVSDK_NGX_Parameter* params, GpuTextures& t)
+    veyra::ngx::NgxCoreHost& core, NVSDK_NGX_Parameter* params, GpuTextures& t, bool alternateGroups=false)
 {
     veyra::Status status = veyra::Status::Ok;
     veyra::ngx::DlssFgBackend fg;
@@ -383,7 +387,8 @@ static bool runPlanarSix(veyra::gfx::CommandSlotRing& ring,
         }
         std::memcpy(t.mappedColor,current.data(),current.size());
         uint64_t previousHash=0;
-        for(unsigned sub=1;ok&&sub<=5;++sub){
+        const unsigned groupCount=alternateGroups&&(frame%2==0)?1u:5u;
+        for(unsigned sub=1;ok&&sub<=groupCount;++sub){
             list=ring.acquire(0,status);if(!list){ok=false;break;}
             if(sub==1){
                 copyUploadToTexture(list,t.backbuffer.Get(),t.uploadColor.Get(),DXGI_FORMAT_R8G8B8A8_UNORM,kWidth,kHeight);
@@ -397,7 +402,7 @@ static bool runPlanarSix(veyra::gfx::CommandSlotRing& ring,
             veyra::ngx::DlssFgBackend::EvalDesc evaluate{};
             evaluate.backbuffer=t.backbuffer.Get();evaluate.depth=t.depth.Get();evaluate.mvecs=t.mvecs.Get();
             evaluate.outputInterpolated=t.outInterp.Get();evaluate.outputDisableInterpolation=t.disableFlag.Get();
-            evaluate.reset=frame==0;evaluate.frameId=frame+1;evaluate.multiFrameCount=5;evaluate.multiFrameIndex=sub;
+            evaluate.reset=frame==0;evaluate.frameId=frame+1;evaluate.multiFrameCount=groupCount;evaluate.multiFrameIndex=sub;
             evaluate.mvecScaleX=1.0f/kWidth;evaluate.mvecScaleY=1.0f/kHeight;
             ok=fg.evaluate(list,params,evaluate,status);
             for(unsigned j=0;j<5;++j){barriers[j].Transition.StateBefore=barriers[j].Transition.StateAfter;barriers[j].Transition.StateAfter=j<3?D3D12_RESOURCE_STATE_COMMON:D3D12_RESOURCE_STATE_COPY_SOURCE;}
@@ -427,16 +432,20 @@ static bool runPlanarSix(veyra::gfx::CommandSlotRing& ring,
             }
             const uint64_t hash=fnv1a64(pixels,current.size());
             const bool unique=hash!=previousHash&&hash!=fnv1a64(previous.data(),previous.size())&&hash!=fnv1a64(current.data(),current.size());
-            const bool position=std::abs(shift-16.0*sub/6)<=1.0;
+            const double expectedShift=16.0*sub/(groupCount+1);
+            const bool position=std::abs(shift-expectedShift)<=1.0;
             ++generated;distinct+=unique;accurate+=position&&unique&&!*flag;previousHash=hash;
-            log::info("fg-planar6",std::format("frame={} sub={} expected={:.3f} observed={:.3f} distinct={} disabled={} positionPass={}",frame,sub,16.0*sub/6,shift,unique,unsigned(*flag),position));
+            log::info("fg-planar6",std::format("frame={} group={} sub={} expected={:.3f} observed={:.3f} distinct={} disabled={} positionPass={}",frame,groupCount,sub,expectedShift,shift,unique,unsigned(*flag),position));
             t.readbackInterp->Unmap(0,nullptr);t.readbackFlag->Unmap(0,nullptr);
         }
         previous=current;
     }
     const bool drained=ring.drainQueue();fg.release();
-    log::info("fg-planar6",std::format("directNGX=true generated={} distinct={} contentValid={} graphUsed=false",generated,distinct,accurate));
-    return ok&&drained&&generated==55&&accurate==55;
+    // 12 frames: frame 0 is the reset seed (its outputs are not scored).
+    // Fixed 5: 11*5=55. Alternating 1/5 from frame 1: odd frames 5, even frames 1 -> 6*5+5*1=35.
+    const unsigned expectedGenerated=alternateGroups?35u:55u;
+    log::info("fg-planar6",std::format("directNGX=true alternateGroups={} generated={} distinct={} contentValid={} expected={} graphUsed=false",alternateGroups,generated,distinct,accurate,expectedGenerated));
+    return ok&&drained&&generated==expectedGenerated&&accurate==expectedGenerated;
 }
 
 // Runs one DLSSG phase (translation or cut) for a given mvec convention.
@@ -838,7 +847,7 @@ int runFgTest(const FgTestArgs& args)
     }
 
     if(args.planarSix){
-        const bool passed=caps.multiFrameCountMax>=5&&runPlanarSix(ring,coreHost,params,textures);
+        const bool passed=caps.multiFrameCountMax>=5&&runPlanarSix(ring,coreHost,params,textures,args.alternateGroups);
         coreHost.destroyParameters(params);coreHost.shutdown();ring.shutdown();context.shutdown();
         return passed?0:1;
     }

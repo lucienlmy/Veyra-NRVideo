@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <string>
+#include <optional>
 
 #include "veyra/Result.h"
 #include "veyra/gfx/XessPresenter.h"
@@ -26,6 +27,12 @@ using ComPtr = Microsoft::WRL::ComPtr<T>;
 class PresentSink {
 public:
     static bool hdrDisplayActive(HWND);
+    // The factory is cached process-wide; DXGI factories detect display
+    // topology changes (IsCurrent) so a stale one is recreated on demand.
+    // Creating a factory and enumerating every adapter/output each call ran
+    // on the graph owner every 2 s under HDR (sweep 2026-09-22 A1).
+    static std::optional<bool> queryHdrDisplayActive(HWND,HMONITOR* queriedMonitor=nullptr);
+    static double displayRefreshFps(HWND);
     PresentSink() = default;
     ~PresentSink();
 
@@ -50,6 +57,9 @@ public:
         // Requested frame-generation multiplier (2 = one generated frame).
         // Only the XeSS path consumes it today; >2 requires the provider unlock.
         uint32_t fgMultiplier = 1;
+        // XeLL low-latency sleep on the source-input thread. Must stay true
+        // for generation (provider returns -15 otherwise); diagnostic toggle.
+        bool xessLowLatencySleep = true;
         // Probe runs create their own window class name per process.
         std::wstring title = L"Veyra";
         HWND targetWindow = nullptr; // borrowed UI-owned child HWND; never destroyed by sink
@@ -76,6 +86,28 @@ public:
         HRESULT result=S_OK;
     };
     const PresentTiming& lastPresentTiming()const{return presentTiming_;}
+    // Display-side evidence: DXGI frame statistics deltas since the previous
+    // sample. presents = successful Present calls in the window; refreshes =
+    // vertical refreshes elapsed (SyncRefreshCount); displayed = refreshes at
+    // which a NEW presented frame was scanned out (PresentRefreshCount delta).
+    // presents - displayed = submissions that never reached the screen (with
+    // tearing/vsync off, dropped by flip). Unsupported (proxy swapchain or
+    // pre-first-present) leaves supported=false; nothing is invented.
+    // Raw DXGI counters, deltas over the sampling window. NONE of these is a
+    // count of frames the panel actually showed, and no combination of them
+    // yields one on a tearing flip-discard swapchain (measured 2026-09-22:
+    // with 273 Present calls per second on a 100 Hz panel, PresentCount also
+    // reads 273 while both refresh counters read 100). Use PresentMon for
+    // scanout. presents: our own Present() calls. displayed: DXGI PresentCount
+    // (completed presents). refreshes: SyncRefreshCount (vblanks elapsed).
+    // displayedRefresh: PresentRefreshCount (vblank index, also ~= refreshes).
+    struct FrameStatisticsDelta {
+        bool supported=false;
+        uint64_t presents=0,displayed=0,refreshes=0,displayedRefresh=0;
+        HRESULT result=S_OK;
+    };
+    FrameStatisticsDelta sampleFrameStatistics();
+    double displayRefreshHz()const{return displayRefreshHz_;}
     bool configurePacing(bool enabled,bool vsync);
     bool presentationReady();
     bool pacingActive()const{return pacing_;}
@@ -138,6 +170,10 @@ private:
     HANDLE latencyHandle_=nullptr;
     bool pacing_=false,capacityAcquired_=false;
     PresentTiming presentTiming_{};
+    double displayRefreshHz_=0;
+    bool frameStatisticsBaseValid_=false;
+    uint64_t frameStatisticsBasePresents_=0;
+    UINT frameStatisticsBasePresentRefresh_=0,frameStatisticsBaseSyncRefresh_=0,frameStatisticsBaseDisplayed_=0;
 };
 
 } // namespace veyra::gfx

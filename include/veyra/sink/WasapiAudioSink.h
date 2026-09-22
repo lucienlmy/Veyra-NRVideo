@@ -213,6 +213,13 @@ private:
     std::atomic<uint64_t> timelineWriteFrame_{0};
     std::atomic<float> gain_{1};float smoothedGain_=1,loggedGain_=-1;
     IMMDeviceEnumerator* enum_ = nullptr;
+    // Default-endpoint change notification: flags the renderer as invalidated
+    // so the existing recovery path rebuilds the endpoint promptly instead of
+    // waiting for the next write to fail (sweep 2026-09-22 C6).
+    struct EndpointNotifier;
+    EndpointNotifier* notifier_ = nullptr;
+    void registerEndpointNotification();
+    void unregisterEndpointNotification();
     IMMDevice* device_ = nullptr;
     IAudioClient* client_ = nullptr;
     IAudioRenderClient* render_ = nullptr;

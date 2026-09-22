@@ -15,8 +15,8 @@ namespace veyra::gfx {
 // the last frame of a burst, so at 3X/4X the intermediate ones are presented
 // back to back and read as a clump followed by a gap.
 //
-// The provider already knows the correct spacing - it computes
-// "real frame duration / multiplier" once per burst - but only ever hands the
+// The provider estimates spacing from its timing inputs; this does not prove
+// uniform burst-boundary cadence under load. It only ever hands the
 // last generated frame to its own scheduler. This port intercepts the present
 // thunk, recognises the two call sites that present generated frames, and hands
 // the loop's frames to the provider's own scheduler with the arguments the

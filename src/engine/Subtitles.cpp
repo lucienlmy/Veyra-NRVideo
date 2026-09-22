@@ -603,19 +603,15 @@ uint64_t SubtitleLoader::request(std::wstring path){
 }
 std::optional<SubtitleLoader::Result> SubtitleLoader::poll(){std::lock_guard lock(p_->mutex);auto result=std::move(p_->ready);p_->ready.reset();return result;}
 
-SubtitleAlignResult alignSubtitleToAudio(const std::wstring& mediaPath,const SubtitleTrack& track,int maxShiftSeconds){
+SubtitleAlignResult alignSubtitleToAudio(const std::wstring& mediaPath,const SubtitleTrack& track,int maxShiftSeconds,std::stop_token stop){
     SubtitleAlignResult result;
     if(track.cues.empty()){result.detail=L"没有可用的字幕内容";return result;}
-    log::info("subtitle",std::format("auto align skipped: {}",utf8(result.detail)));
     AVFormatContext* input=nullptr;
     const auto utf8Path=utf8(mediaPath);
     if(avformat_open_input(&input,utf8Path.c_str(),nullptr,nullptr)<0||!input){result.detail=L"无法打开媒体";return result;}
-    log::info("subtitle",std::format("auto align skipped: {}",utf8(result.detail)));
     if(avformat_find_stream_info(input,nullptr)<0){avformat_close_input(&input);result.detail=L"无法读取媒体信息";return result;}
-    log::info("subtitle",std::format("auto align skipped: {}",utf8(result.detail)));
     const int audioIndex=av_find_best_stream(input,AVMEDIA_TYPE_AUDIO,-1,-1,nullptr,0);
     if(audioIndex<0){avformat_close_input(&input);result.detail=L"该文件没有音轨，无法自动对齐";return result;}
-    log::info("subtitle",std::format("auto align skipped: {}",utf8(result.detail)));
     AVStream* stream=input->streams[audioIndex];
     const AVCodec* decoder=avcodec_find_decoder(stream->codecpar->codec_id);
     AVCodecContext* context=decoder?avcodec_alloc_context3(decoder):nullptr;
@@ -647,7 +643,7 @@ SubtitleAlignResult alignSubtitleToAudio(const std::wstring& mediaPath,const Sub
     AVPacket* packet=av_packet_alloc();
     AVFrame* frame=av_frame_alloc();
     const double limitSeconds=1800.0;
-    while(packet&&frame&&av_read_frame(input,packet)>=0){
+    while(packet&&frame&&!stop.stop_requested()&&av_read_frame(input,packet)>=0){
         if(packet->stream_index!=audioIndex){av_packet_unref(packet);continue;}
         if(avcodec_send_packet(context,packet)<0){av_packet_unref(packet);continue;}
         av_packet_unref(packet);

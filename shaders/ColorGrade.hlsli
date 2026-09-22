@@ -108,7 +108,7 @@ float3 RgbToHsv(float3 c)
 }
 float3 HsvToRgb(float3 hsv)
 {
-    const float h = hsv.x / 60.0;
+    const float h = frac(hsv.x / 360.0) * 6.0;
     const float c = hsv.z * hsv.y;
     const float x = c * (1.0 - abs(fmod(h, 2.0) - 1.0));
     const float m = hsv.z - c;

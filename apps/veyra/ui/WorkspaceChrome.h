@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_map>
 #include "Theme.h"
 #include "veyra/engine/EngineController.h"
 #include <format>
@@ -15,7 +16,16 @@ struct ChromeLayout {
         statusTop=std::min(h-186,std::max(top+336,h-330));
     }
 };
-inline void chromeText(HDC dc,HWND window,std::wstring value,int x,int y,int w,int h,int size,COLORREF c,int weight=FW_NORMAL,UINT flags=DT_LEFT|DT_SINGLELINE|DT_VCENTER){auto font=makeFont(window,size,weight);auto old=SelectObject(dc,font);SetTextColor(dc,c);SetBkMode(dc,TRANSPARENT);RECT r{dip(window,x),dip(window,y),dip(window,x+w),dip(window,y+h)};glassText(dc,value.c_str(),-1,&r,flags|DT_END_ELLIPSIS);SelectObject(dc,old);DeleteObject(font);}
+// Fonts are cached per (dpi,size,weight); the dashboard draws dozens of
+// strings per 250 ms tick and used to create/delete an HFONT for each.
+inline HFONT cachedChromeFont(HWND window,int size,int weight){
+    static std::unordered_map<uint64_t,HFONT> cache;
+    const uint64_t key=(uint64_t(dip(window,1000))<<40)|(uint64_t(uint32_t(size))<<16)|uint64_t(uint32_t(weight));
+    auto it=cache.find(key);if(it!=cache.end())return it->second;
+    if(cache.size()>64){for(auto& entry:cache)DeleteObject(entry.second);cache.clear();}
+    return cache[key]=makeFont(window,size,weight);
+}
+inline void chromeText(HDC dc,HWND window,std::wstring value,int x,int y,int w,int h,int size,COLORREF c,int weight=FW_NORMAL,UINT flags=DT_LEFT|DT_SINGLELINE|DT_VCENTER){auto font=cachedChromeFont(window,size,weight);auto old=SelectObject(dc,font);SetTextColor(dc,c);SetBkMode(dc,TRANSPARENT);RECT r{dip(window,x),dip(window,y),dip(window,x+w),dip(window,y+h)};glassText(dc,value.c_str(),-1,&r,flags|DT_END_ELLIPSIS);SelectObject(dc,old);}
 inline void paintChrome(HWND window,HDC dc,const ChromeLayout& l,const engine::PlayerSnapshot& s,bool full){
     RECT client{};GetClientRect(window,&client);if(!copyGlass(dc,client,window))FillRect(dc,&client,bgBrush());if(full)return;
     using namespace Gdiplus;AlphaGraphics drawing(dc);auto& g=drawing.get();g.SetSmoothingMode(SmoothingModeAntiAlias);

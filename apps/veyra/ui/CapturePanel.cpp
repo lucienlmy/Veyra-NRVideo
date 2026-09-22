@@ -7,6 +7,7 @@
 #include "veyra/source/CaptureCardSource.h"
 #include "veyra/source/CaptureFormatRank.h"
 #include <future>
+#include <thread>
 #include <format>
 namespace veyra::ui {
 namespace {
@@ -16,6 +17,13 @@ std::future<Query> pending;bool busy=false,refreshAfterQuery=false;int queriedDe
 std::vector<source::CaptureFormat> formats;
 std::vector<source::CaptureDevice> videoDevices,audioDevices;
 CapturePreferences remembered;
+unsigned selectedColor(HWND h){return source::captureColorOverride(unsigned(SendDlgItemMessageW(h,10,CB_GETCURSEL,0,0)),unsigned(SendDlgItemMessageW(h,20,CB_GETCURSEL,0,0)));}
+void saveDeviceColor(HWND h){
+    const int device=int(SendDlgItemMessageW(h,1,CB_GETCURSEL,0,0));
+    if(device<0||size_t(device)>=videoDevices.size())return;
+    remembered.deviceColors[videoDevices[size_t(device)].path]=selectedColor(h);
+    if(!CapturePreferenceStore(runtime::localDataDirectory()).save(remembered))log::warn("capture","Failed to save capture color preference");
+}
 std::function<bool()> readSdr;std::function<bool(bool)> setSdr;std::function<int()> readAudioIngress;std::function<bool(int)> setAudioIngress;
 std::function<bool()> readFlip;std::function<bool(bool)> setFlip;
 std::function<int()> readBuffer;std::function<bool(int)> setBuffer;
@@ -53,9 +61,10 @@ void maybeShowFormatHint(HWND h){
 }
 void query(int device){if(busy)return;busy=true;queriedDevice=device;queryStarted=GetTickCount64();SetDlgItemTextW(window,8,L"正在查询设备能力…当前播放继续");EnableWindow(GetDlgItem(window,4),FALSE);EnableWindow(GetDlgItem(window,5),FALSE);EnableWindow(GetDlgItem(window,1),FALSE);
     const std::wstring videoPath=device>=0&&size_t(device)<videoDevices.size()?videoDevices[size_t(device)].path:L"";
+    EnableWindow(GetDlgItem(window,10),FALSE);EnableWindow(GetDlgItem(window,20),FALSE);
     pending=std::async(std::launch::async,[device,videoPath]{CoInitializeEx(nullptr,COINIT_MULTITHREADED);Query result;result.device=device;try{if(device<0){result.video=source::CaptureCardSource::deviceDetails();result.audio=source::CaptureCardSource::deviceDetails(true);}else result.formats=videoPath.empty()?source::CaptureCardSource::formats(unsigned(device)):source::CaptureCardSource::formatsByPath(videoPath);}catch(...){}CoUninitialize();return result;});
 }
-void arrange(){RECT r{};GetClientRect(window,&r);const int width=MulDiv(r.right,96,veyra::ui::layoutDpi(window));const int ys[]={0,44,114,184,448,448,14,84,380,154,254,224,294,514,484,602,566,542,338,342};for(int id=1;id<=19;++id){int x=id==5?width-152:id==18?width-156:16;int w=id==4?width-184:id==5||id==18?136:id==19?width-184:width-32;MoveWindow(GetDlgItem(window,id),dip(window,x),dip(window,ys[id]),dip(window,w),dip(window,(id<=3||id==10||id==13||id==16)?180:id==8?56:id==4||id==5?36:id==18?32:24),TRUE);}}
+void arrange(){RECT r{};GetClientRect(window,&r);const int width=MulDiv(r.right,96,veyra::ui::layoutDpi(window));const int ys[]={0,44,114,184,448,448,14,84,380,154,254,224,294,514,484,602,566,542,338,342,254,224};for(int id=1;id<=21;++id){int x=id==5?width-152:id==18?width-156:(id==20||id==21)?width-180:16;int w=id==4?width-184:id==5||id==18?136:id==19?width-184:(id==10||id==11)?width-212:(id==20||id==21)?164:width-32;MoveWindow(GetDlgItem(window,id),dip(window,x),dip(window,ys[id]),dip(window,w),dip(window,(id<=3||id==10||id==13||id==16||id==20)?180:id==8?56:id==4||id==5?36:id==18?32:24),TRUE);}}
 LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
 case WM_CREATE:{window=h;font=makeFont(h);titleTheme(h);auto add=[&](const wchar_t* cls,const wchar_t* label,int id,DWORD style){auto c=CreateWindowExW(0,cls,label,WS_CHILD|WS_VISIBLE|style,0,0,1,1,h,HMENU(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(c,WM_SETFONT,WPARAM(font),TRUE);themeControl(c);};
     remembered=CapturePreferenceStore(runtime::localDataDirectory()).load();
@@ -65,7 +74,9 @@ case WM_CREATE:{window=h;font=makeFont(h);titleTheme(h);auto add=[&](const wchar
     refreshAfterQuery=busy;
     for(int i=1;i<=3;++i)add(L"COMBOBOX",L"",i,CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP);
     add(L"COMBOBOX",L"",10,CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP);add(L"STATIC",L"输入颜色（变更需重连）",11,0);
-    for(auto name:{L"自动识别 SDR / HDR · 设备元数据",L"手动 HDR10 / PQ · BT.2020",L"手动 HLG · BT.2020 / 1000nit参考"})SendDlgItemMessageW(h,10,CB_ADDSTRING,0,LPARAM(name));SendDlgItemMessageW(h,10,CB_SETCURSEL,0,0);
+    for(auto name:{L"自动 · 设备元数据",L"Rec.2100 PQ · HDR10",L"Rec.2100 HLG",L"Rec.709 · SDR"})SendDlgItemMessageW(h,10,CB_ADDSTRING,0,LPARAM(name));SendDlgItemMessageW(h,10,CB_SETCURSEL,0,0);
+    add(L"COMBOBOX",L"",20,CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP);add(L"STATIC",L"输入范围",21,0);
+    for(auto name:{L"自动",L"有限 / Limited",L"完整 / Full"})SendDlgItemMessageW(h,20,CB_ADDSTRING,0,LPARAM(name));SendDlgItemMessageW(h,20,CB_SETCURSEL,0,0);
     add(L"BUTTON",L"转为 SDR 显示（所有预览，立即生效）",12,BS_AUTOCHECKBOX|WS_TABSTOP);SendDlgItemMessageW(h,12,BM_SETCHECK,readSdr()?BST_CHECKED:BST_UNCHECKED,0);
     add(L"COMBOBOX",L"",13,CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP);add(L"STATIC",L"采集音频（变更需重连）",14,0);
     for(auto name:{L"自动：优先线性 PCM，必要时 Dolby/DTS 位流解码",L"强制线性 PCM（不接受 Dolby/DTS 位流）",L"位流优先：优先直通给功放（无直通时解码为 PCM）"})SendDlgItemMessageW(h,13,CB_ADDSTRING,0,LPARAM(name));
@@ -105,8 +116,11 @@ case WM_TIMER:
             const bool sameDevice=size_t(result.device)<videoDevices.size()&&videoDevices[size_t(result.device)].path==remembered.videoPath;
             if(sameDevice&&!remembered.formatKey.empty()){
                 restore=-1;for(size_t i=0;i<formats.size();++i)if(formats[i].key==remembered.formatKey)restore=int(i);
-                SendDlgItemMessageW(h,10,CB_SETCURSEL,remembered.colorOverride,0);
-            }else SendDlgItemMessageW(h,10,CB_SETCURSEL,0,0);
+            }
+            const auto color=size_t(result.device)<videoDevices.size()?remembered.colorForDevice(videoDevices[size_t(result.device)].path):0;
+            SendDlgItemMessageW(h,10,CB_SETCURSEL,source::captureColorSpace(color),0);
+            SendDlgItemMessageW(h,20,CB_SETCURSEL,source::captureColorRange(color),0);
+            EnableWindow(GetDlgItem(h,10),TRUE);EnableWindow(GetDlgItem(h,20),TRUE);
             SetDlgItemTextW(h,18,std::format(L"{:g}",sameDevice?remembered.requestedFps:0).c_str());
             SendDlgItemMessageW(h,2,CB_SETCURSEL,restore,0);EnableWindow(GetDlgItem(h,4),restore>=0);
             SetDlgItemTextW(h,8,formats.empty()?L"未读到有效的4K以内采集格式，或设备正被其他应用占用。":L"连接后使用当前增强设置。格式与音频变更需要重新连接。");
@@ -116,6 +130,7 @@ case WM_TIMER:
     }else if(busy&&GetTickCount64()-queryStarted>5000)SetDlgItemTextW(h,8,L"设备查询耗时较长。可以关闭此面板，当前播放不受影响。");
     return 0;
 case WM_COMMAND:
+    if((LOWORD(wp)==10||LOWORD(wp)==20)&&HIWORD(wp)==CBN_SELCHANGE){saveDeviceColor(h);return 0;}
     if(LOWORD(wp)==12&&HIWORD(wp)==BN_CLICKED){
         const bool enabled=SendDlgItemMessageW(h,12,BM_GETCHECK,0,0)==BST_CHECKED;
         if(!setSdr(enabled))SetDlgItemTextW(h,8,L"当前正在切换增强，请稍后再试。");
@@ -148,9 +163,10 @@ case WM_COMMAND:
         const bool audioIndexValid=SendDlgItemMessageW(h,3,CB_GETCURSEL,0,0)!=CB_ERR&&(audio<0||size_t(audio)<audioDevices.size());
         if(!busy&&device==queriedDevice&&format>=0&&size_t(format)<formats.size()&&device>=0&&size_t(device)<videoDevices.size()&&audioIndexValid){
             const auto* audioDevice=audio>=0?&audioDevices[size_t(audio)]:nullptr;
-            const auto path=source::CaptureCardSource::makeCapturePath(unsigned(device),videoDevices[size_t(device)],formats[size_t(format)].index,audio,audioDevice,unsigned(SendDlgItemMessageW(h,10,CB_GETCURSEL,0,0)),requestedFps);
+            const auto path=source::CaptureCardSource::makeCapturePath(unsigned(device),videoDevices[size_t(device)],formats[size_t(format)].index,audio,audioDevice,selectedColor(h),requestedFps,formats[size_t(format)].key);
             if(!path.empty()){
-                remembered={videoDevices[size_t(device)].path,formats[size_t(format)].key,audioDevice?audioDevice->path:L"",audioDevice?(audioDevice->wasapi?source::kCaptureAudioWasapi:0):audio,unsigned(SendDlgItemMessageW(h,10,CB_GETCURSEL,0,0)),remembered.formatHintDismissed,requestedFps};
+                auto colors=remembered.deviceColors;colors[videoDevices[size_t(device)].path]=selectedColor(h);
+                remembered={videoDevices[size_t(device)].path,formats[size_t(format)].key,audioDevice?audioDevice->path:L"",audioDevice?(audioDevice->wasapi?source::kCaptureAudioWasapi:0):audio,selectedColor(h),remembered.formatHintDismissed,requestedFps,std::move(colors)};
                 if(!CapturePreferenceStore(runtime::localDataDirectory()).save(remembered))log::warn("capture","Failed to save capture selection");
                 start(path);DestroyWindow(h);
             }
@@ -162,7 +178,11 @@ case WM_SIZE:arrange();return 0;
 case WM_DPICHANGED:{auto r=reinterpret_cast<RECT*>(lp);SetWindowPos(h,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE);auto old=font;font=makeFont(h);EnumChildWindows(h,[](HWND c,LPARAM f)->BOOL{SendMessageW(c,WM_SETFONT,WPARAM(f),TRUE);return TRUE;},LPARAM(font));DeleteObject(old);arrange();return 0;}
 case WM_KEYDOWN:if(wp==VK_ESCAPE){DestroyWindow(h);return 0;}break;
 case WM_CLOSE:DestroyWindow(h);return 0;
-case WM_DESTROY:KillTimer(h,1);DeleteObject(font);window=nullptr;return 0;
+case WM_DESTROY:KillTimer(h,1);DeleteObject(font);window=nullptr;
+    // Do not block window destruction on a device enumeration still running:
+    // park the future so its destructor waits on a detached helper instead.
+    if(pending.valid()&&pending.wait_for(std::chrono::seconds(0))!=std::future_status::ready){std::thread([f=std::move(pending)]()mutable{try{(void)f.get();}catch(...){}}).detach();}
+    return 0;
 }return DefWindowProcW(h,msg,wp,lp);}
 }
 void showCapturePanel(HWND parent,std::function<void(const std::wstring&)> callback,std::function<bool()> read,std::function<bool(bool)> write,std::function<int()> readIngress,std::function<bool(int)> writeIngress,std::function<bool()> readFlipped,std::function<bool(bool)> writeFlipped,std::function<int()> readBuffered,std::function<bool(int)> writeBuffered){start=std::move(callback);readSdr=std::move(read);setSdr=std::move(write);readAudioIngress=std::move(readIngress);setAudioIngress=std::move(writeIngress);readFlip=std::move(readFlipped);setFlip=std::move(writeFlipped);readBuffer=std::move(readBuffered);setBuffer=std::move(writeBuffered);if(window){SetForegroundWindow(window);return;}WNDCLASSW wc{};wc.lpfnWndProc=proc;wc.hInstance=GetModuleHandleW(nullptr);wc.lpszClassName=L"VeyraCaptureSetup";wc.hbrBackground=panelBrush();wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassW(&wc);CreateWindowExW(WS_EX_TOOLWINDOW,wc.lpszClassName,L"采集卡 · 连接设置",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_VISIBLE,CW_USEDEFAULT,CW_USEDEFAULT,dip(parent,560),dip(parent,680),parent,nullptr,wc.hInstance,nullptr);}

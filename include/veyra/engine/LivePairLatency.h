@@ -26,8 +26,10 @@ public:
         std::nth_element(current.begin(),current.begin()+index,current.end());
         // One millisecond covers polling/wakeup jitter. Never add latency above
         // the existing policy, or compress phase by more than 0.25 ms per pair.
-        const auto target=std::min(legacyDelay,current[index]+10000);
-        const auto step=std::min<int64_t>(2500,interval/multiplier/16);
+        // 0.5 ms covers wake-up jitter with MMCSS on the owner thread; the
+        // per-pair step may close a subframe interval over eight pairs.
+        const auto target=std::min(legacyDelay,current[index]+5000);
+        const auto step=std::min<int64_t>(5000,interval/multiplier/8);
         selected_=std::clamp(selected_?selected_-step:legacyDelay,target,legacyDelay);
         return selected_;
     }

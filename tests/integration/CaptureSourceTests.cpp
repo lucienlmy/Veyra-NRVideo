@@ -22,7 +22,14 @@ int wmain(int argc,wchar_t** argv){
             unsigned device=0;int format=0,audio=0;
             if(swscanf_s(argv[2],L"capture:%u:%d:%d",&device,&format,&audio)!=3||audio!=-1)return 2;
             const auto devices=veyra::source::CaptureCardSource::deviceDetails();if(device>=devices.size())return 2;
-            desc.path=veyra::source::CaptureCardSource::makeCapturePath(device,devices[device],format,audio,nullptr,0,expected);
+            const auto formats=veyra::source::CaptureCardSource::formatsByPath(devices[device].path);
+            const auto* selected=veyra::source::selectCaptureFormat(formats,format,L"");
+            if(!selected)return 2;
+            // An obsolete ordinal must not override the persisted format identity.
+            desc.path=veyra::source::CaptureCardSource::makeCapturePath(device,devices[device],999999,audio,nullptr,0,expected,selected->key);
+            auto missing=desc;
+            missing.path=veyra::source::CaptureCardSource::makeCapturePath(device,devices[device],format,audio,nullptr,0,expected,L"missing-test-format");
+            if(source.configure(missing)){printf("FAIL missing format silently accepted\n");return 1;}
         }
         if(!source.configure(desc)){wprintf(L"RATE_REJECTED %ls\n",source.errorMessage().c_str());return 3;}
         if(!source.start())return 4;

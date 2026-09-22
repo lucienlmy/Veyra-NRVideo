@@ -41,6 +41,16 @@ int main(){
         std::cout<<"alignment="<<alignment<<" extent="<<imageWidth<<'x'<<imageHeight<<" red="<<r0<<','<<r1<<" green="<<g0<<','<<g1<<'\n';
         if(alignment==5)check(std::abs((std::min(r0,g0)+std::max(r1,g1))/2-240)<12,"middle group is centered");
     }
+    // Compare real glyph raster heights, not just the setting used by the renderer.
+    SubtitleLine stable;stable.text=L"HHHH";stable.style.size=28;stable.style.shadow=0;
+    view.targetLines=1;
+    auto inkBands=[&](){std::vector<int> heights;int run=0;for(int y=0;y<imageHeight;++y){bool ink=false;for(int x=0;x<imageWidth;++x)ink|=(pixels[size_t(y)*imageWidth+x]>>24)>30;if(ink)++run;else if(run){heights.push_back(run);run=0;}}if(run)heights.push_back(run);return heights;};
+    updateSubtitleOverlay(overlay,{stable},view);const auto one=inkBands();
+    stable.text=L"HHHH\nHHHH";updateSubtitleOverlay(overlay,{stable},view);const auto two=inkBands();
+    check(one.size()==1&&two.size()==2&&std::abs(one[0]-two[0])<=1&&std::abs(one[0]-two[1])<=1,"two-line cue preserves one-line glyph size even with target one");
+    view.fitToLines=true;updateSubtitleOverlay(overlay,{stable},view);const auto fitted=inkBands();
+    check(fitted.size()==2&&fitted[0]<two[0],"explicit fit-to-lines still shrinks text");
+    view.fitToLines=false;
     RECT rect{0,0,640,480};
     const auto original=signatureOf({red},view,rect);
     auto changes=[&](auto change){auto copy=red;change(copy.style);check(signatureOf({copy},view,rect)!=original,"style mutation invalidates cache");};

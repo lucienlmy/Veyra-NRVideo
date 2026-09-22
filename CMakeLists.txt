@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(veyra VERSION 1.4.3 LANGUAGES CXX RC)
+project(veyra VERSION 1.4.4 LANGUAGES CXX RC)
 # Shown in the EXE's version resource and in the package name. CMake versions
 # must be numeric, so the beta marker lives here instead.
-set(VEYRA_DISPLAY_VERSION "1.4.3" CACHE STRING "Human-readable version string")
+set(VEYRA_DISPLAY_VERSION "1.4.4beta" CACHE STRING "Human-readable version string")
 # The cache keeps the first value it ever saw, so a release that bumps
 # project(VERSION) used to ship an EXE still stamped with the previous display
 # string. Re-align it whenever the cached label does not start with the project
@@ -251,6 +251,7 @@ veyra_add_compute_shader(veyra_shader_present_motion PresentMotion)
 veyra_add_compute_shader(veyra_shader_nvof_densify NvofDensify)
 veyra_add_compute_shader(veyra_shader_nr_downsample NrDownsample)
 veyra_add_compute_shader(veyra_shader_nr_residual NrResidualComposite)
+veyra_add_compute_shader(veyra_shader_nr_temporal NrTemporal)
 veyra_add_compute_shader(veyra_shader_flow_adapt FlowAdapt)
 veyra_add_compute_shader(veyra_shader_rgb_nv12 RgbToNv12)
 
@@ -406,7 +407,7 @@ endif()
 # EnhanceGraph (the real GPU chain) needs the NGX + NVOF backends; wire it
 # into veyra_pipeline only when both exist so bare contract builds still work.
 if(TARGET veyra_ngx AND TARGET veyra_nvof AND VEYRA_FFMPEG_ROOT)
-  target_sources(veyra_pipeline PRIVATE src/pipeline/EnhanceGraph.cpp src/core/SceneCadenceAnalyzer.cpp)
+  target_sources(veyra_pipeline PRIVATE src/pipeline/EnhanceGraph.cpp src/pipeline/NrTemporalPass.cpp src/core/SceneCadenceAnalyzer.cpp)
   target_include_directories(veyra_pipeline PRIVATE ${FFMPEG_INCLUDE_DIRS})
   target_link_libraries(veyra_pipeline PRIVATE veyra_ngx veyra_nvof ${FFMPEG_LIBRARIES})
   add_dependencies(veyra_pipeline
@@ -485,11 +486,12 @@ if(VEYRA_FFMPEG_ROOT AND EXISTS "${VEYRA_FFMPEG_ROOT}/include/libavformat/avform
 
   # veyra_sources: product input sources (Playbook R3/R7). MediaFileSource
   # composes veyra_media; no second decode implementation exists.
-  add_dependencies(veyra_pipeline veyra_shader_nr_downsample veyra_shader_nr_residual veyra_shader_flow_adapt)
+  add_dependencies(veyra_pipeline veyra_shader_nr_downsample veyra_shader_nr_residual veyra_shader_nr_temporal veyra_shader_flow_adapt)
   add_library(veyra_sources STATIC
     src/source/NativeCaptureSink.cpp
     src/source/MediaFileSource.cpp
     src/source/CaptureCardSource.cpp
+    src/source/ElgatoHdrControl.cpp
     src/source/ScreenCaptureSource.cpp
     src/source/AverMediaAudioSwitch.cpp
     src/source/CaptureCompressedDecoder.cpp
@@ -588,6 +590,9 @@ if(VEYRA_FFMPEG_ROOT AND EXISTS "${VEYRA_FFMPEG_ROOT}/include/libavformat/avform
   target_compile_definitions(veyra_fsr_upscale_probe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
   target_link_libraries(veyra_fsr_upscale_probe PRIVATE d3d12 dxgi dxguid)
   add_executable(veyra_capture_color_tests tests/unit/CaptureColorContractTests.cpp)
+  add_executable(veyra_capture_format_selection_tests tests/unit/CaptureFormatSelectionTests.cpp)
+  target_compile_features(veyra_capture_format_selection_tests PRIVATE cxx_std_20)
+  target_include_directories(veyra_capture_format_selection_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_executable(veyra_presentation_worker_tests tests/unit/LiveGpuSchedulerTests.cpp)
   target_compile_features(veyra_presentation_worker_tests PRIVATE cxx_std_20)
   target_compile_definitions(veyra_presentation_worker_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -597,6 +602,10 @@ if(VEYRA_FFMPEG_ROOT AND EXISTS "${VEYRA_FFMPEG_ROOT}/include/libavformat/avform
   target_compile_definitions(veyra_realtime_preview_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
   target_include_directories(veyra_realtime_preview_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_executable(veyra_live_presentation_tests tests/integration/LivePresentationTests.cpp)
+  add_executable(veyra_hdr_display_state_tests tests/unit/HdrDisplayStateTests.cpp)
+  target_compile_features(veyra_hdr_display_state_tests PRIVATE cxx_std_20)
+  target_compile_options(veyra_hdr_display_state_tests PRIVATE /utf-8)
+  target_include_directories(veyra_hdr_display_state_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_executable(veyra_nr_runtime_switch_tests tests/integration/NrRuntimeSwitchTests.cpp)
   target_compile_features(veyra_nr_runtime_switch_tests PRIVATE cxx_std_20)
   target_link_libraries(veyra_nr_runtime_switch_tests PRIVATE veyra_engine)
@@ -726,6 +735,12 @@ if(VEYRA_FFMPEG_ROOT AND EXISTS "${VEYRA_FFMPEG_ROOT}/include/libavformat/avform
   target_compile_features(veyra_motion_validation_tests PRIVATE cxx_std_20)
   target_link_libraries(veyra_motion_validation_tests PRIVATE veyra_pipeline)
   add_executable(veyra_repair_shader_tests tests/integration/RepairShaderTests.cpp)
+  add_executable(veyra_nr_temporal_gpu_tests tests/integration/NrTemporalGpuTests.cpp)
+  add_executable(veyra_nr_video_quality_probe tests/integration/NrVideoQualityProbe.cpp)
+  target_compile_features(veyra_nr_video_quality_probe PRIVATE cxx_std_20)
+  target_link_libraries(veyra_nr_video_quality_probe PRIVATE veyra_engine)
+  target_compile_features(veyra_nr_temporal_gpu_tests PRIVATE cxx_std_20)
+  target_link_libraries(veyra_nr_temporal_gpu_tests PRIVATE veyra_pipeline)
   add_executable(veyra_gpu_timing_tests tests/integration/GpuTimingTests.cpp)
   target_compile_features(veyra_gpu_timing_tests PRIVATE cxx_std_20)
   target_link_libraries(veyra_gpu_timing_tests PRIVATE veyra_pipeline)
@@ -813,6 +828,10 @@ if(VEYRA_FFMPEG_ROOT AND EXISTS "${VEYRA_FFMPEG_ROOT}/include/libavformat/avform
   target_link_libraries(veyra_popup_selector_tests PRIVATE veyra_base comctl32)
   add_dependencies(veyra_engine veyra_shader_hdr_video_sr veyra_shader_present_motion veyra_shader_present_blit)
   add_executable(veyra_hdr_color_tests tests/integration/HdrColorTests.cpp)
+  add_executable(veyra_cpu_yuv_upload_tests tests/integration/CpuYuvUploadTests.cpp)
+  target_compile_features(veyra_cpu_yuv_upload_tests PRIVATE cxx_std_20)
+  target_compile_definitions(veyra_cpu_yuv_upload_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_link_libraries(veyra_cpu_yuv_upload_tests PRIVATE veyra_engine)
   add_executable(veyra_multichannel_tests tests/integration/MultichannelTests.cpp)
   target_compile_features(veyra_multichannel_tests PRIVATE cxx_std_20)
   target_compile_definitions(veyra_multichannel_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -875,7 +894,7 @@ if(VEYRA_FFMPEG_ROOT AND EXISTS "${VEYRA_FFMPEG_ROOT}/include/libavformat/avform
   endif()
   target_compile_features(veyra PRIVATE cxx_std_20)
   target_compile_options(veyra PRIVATE /utf-8)
-  target_link_libraries(veyra PRIVATE veyra_engine comctl32 comdlg32 shell32)
+  target_link_libraries(veyra PRIVATE veyra_engine comctl32 comdlg32 shell32 dbghelp)
   add_dependencies(veyra veyra_shader_present_blit)
 
   # matrix executes through the shared product libraries only.

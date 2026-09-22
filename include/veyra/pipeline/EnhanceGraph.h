@@ -1,6 +1,7 @@
 #pragma once
 #include "veyra/engine/BackendRecovery.h"
 #include "veyra/pipeline/ColorGradeTables.h"
+#include "veyra/pipeline/NrTemporalPass.h"
 
 // EnhanceGraph - the real unified processing graph (Playbook R3.2).
 // Chains, per real frame:
@@ -18,6 +19,7 @@
 // warm-up evaluate runs before views exist; static views are created last.
 #include <cstdint>
 #include "veyra/pipeline/ResetCoordinator.h"
+#include "veyra/diagnostics/DiagnosticEvent.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -75,6 +77,7 @@ struct EnhanceGraphDesc {
     bool enableNr = true;
     bool nrBeforeSr = false;
     engine::NrRuntime nrRuntime=engine::NrRuntime::Original;
+    bool nrTemporal=false;
     bool enableFg = true;
     bool validateMotion = true; // disable only in isolated legacy A/B diagnostics
     bool enableNvofStandalone = false; // run NVOF+densify per frame without FG (quality core)
@@ -151,7 +154,7 @@ public:
     struct FrameOutputs {
         FrameBatch batch;
         uint32_t fgCandidates=0,fgEvaluated=0,fgSkippedBeforeEval=0,fgSkippedForReset=0;
-        bool historyReset=false,fgRecovery=false,fgBudgetSeed=false;
+        bool historyReset=false,fgRecovery=false,fgBudgetSeed=false,fgReduced=false;
         ResetReason detectedReset=ResetReason::None;
         bool contentDuplicate=false;int measuredContentRate=0;
         double ptsMs = 0.0;
@@ -175,7 +178,12 @@ public:
     // does not own the demuxer). `reset` marks the first frame of a new
     // temporal epoch (open/seek/...): NVOF/FG history is not consumed.
     // Returns false on hard failure (run verdict must FAIL).
-    enum class FgDecision { Skip, Evaluate, Seed };
+    // Reduced: the full group does not fit its deadline but one midpoint
+    // frame does. Run a presentable 2X group WITHOUT resetting history
+    // (fg_harness --fg-planar-alt verified 5/1/5 alternation keeps correct
+    // interpolation positions). The pair keeps its true A/B PTS; only the
+    // number of outputs changes, and it is reported as previewFgMultiplier.
+    enum class FgDecision { Skip, Evaluate, Seed, Reduced };
     using FgAdmission=std::function<FgDecision(const FrameBatch&,bool warmingHistory)>;
     // `hardwareSurface` carries the decoded texture for paths whose surface
     // does not travel inside the AVFrame (D3D11VA). It must be provided exactly
@@ -275,6 +283,10 @@ public:
     ID3D12Resource* confidenceResource() const { return confTex_.Get(); }
     // Test-only borrowed ingress output. Read after process, restore NON_PIXEL_SHADER_RESOURCE.
     ID3D12Resource* diagnosticLinearInput() const { return srcRgba_.Get(); }
+    // Offline diagnostics only. Borrowed after process; restore NON_PIXEL_SHADER_RESOURCE.
+    ID3D12Resource* diagnosticNrBase() const { return desc_.nrBeforeSr?srcRgba_.Get():workRgba_.Get(); }
+    ID3D12Resource* diagnosticNrRaw() const { return desc_.nrTemporal?nrTemporal_.raw():residualRgba_.Get(); }
+    ID3D12Resource* diagnosticNrFiltered() const { return residualRgba_.Get(); }
     // Non-empty when the colour stage refused the referenced LUT (input space
     // does not match the content domain). The engine surfaces this in the
     // status panel so the refusal is visible, not only logged.
@@ -352,6 +364,7 @@ private:
     ComPtr<ID3D12Resource> videoSrInput_,videoSrOutput_;
     ComPtr<ID3D12Resource> videoHdrInput_,videoHdrOutput_;
     ComPtr<ID3D12Resource> nrInput_,residualRgba_,nrFlow_,baseFlow_;
+    NrTemporalPass nrTemporal_;
     ComPtr<ID3D12Resource> presentMotion_[2];
     bool presentMotionValid_[2]={};
     uint64_t motionPreviousSource_[2]={},previousSource_=0;
@@ -364,6 +377,7 @@ private:
     ComPtr<ID3D12Resource> depthTex_;
     ComPtr<ID3D12Resource> genFrame_[kGeneratedPoolSlots];
     ComPtr<ID3D12Resource> fgDisable_[kGeneratedPoolSlots],fgDisableReadback_[kGeneratedPoolSlots],fgDisableInit_;
+    std::array<const volatile uint8_t*,kGeneratedPoolSlots> fgDisableMapped_{};
     ComPtr<ID3D12Resource> nrZeroMotion_;
     ComPtr<ID3D12Resource> nrZeroDepth_;
     ComPtr<ID3D12Resource> nvofRawTex_;
@@ -438,6 +452,12 @@ private:
     std::shared_ptr<AVFrame> hardwareInputFrames_[2];
     core::SceneCadenceAnalyzer scene_;
     std::vector<uint8_t> previousLuma_;
+    // Reused per-frame scratch (sweep A4/A5): diagnostic context and the
+    // 64x36 luma sample / 256-bin histogram used by scene/cadence analysis.
+    diagnostics::DiagnosticEvent frameDiagnostic_;
+    uint32_t diagnosticFlowPerf_=~0u;
+    std::vector<uint8_t> lumaSample_;
+    std::vector<double> lumaHistogram_=std::vector<double>(256,0.0);
     double prevPtsMs_ = -1.0;
     bool prevValid_ = false;
     bool fgHistorySkipped_ = false;

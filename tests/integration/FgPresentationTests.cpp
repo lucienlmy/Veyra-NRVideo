@@ -4,6 +4,7 @@
 #include "veyra/sink/ImageExportSink.h"
 #include <d3d12sdklayers.h>
 #include <filesystem>
+#include <cmath>
 #include <iostream>
 #include <thread>
 extern "C" {
@@ -13,7 +14,11 @@ extern "C" {
 
 int wmain(int argc,wchar_t** argv){
     using namespace veyra;
-    if(argc!=2||FAILED(CoInitializeEx(nullptr,COINIT_MULTITHREADED)))return 2;
+    if((argc<2||argc>4)||FAILED(CoInitializeEx(nullptr,COINIT_MULTITHREADED)))return 2;
+    const bool temporal=argc==4;
+    const bool exact=temporal&&std::wstring_view(argv[3])==L"temporal-exact";
+    if(temporal&&!exact&&std::wstring_view(argv[3])!=L"temporal")return 2;
+    const auto runtimePath=argc>=3?std::filesystem::absolute(argv[2]):std::filesystem::path(VEYRA_PROJECT_ROOT)/"runtime_local/nvidia";
     std::filesystem::create_directories(argv[1]);
     HWND window=CreateWindowExW(0,L"STATIC",L"FG presentation regression",WS_POPUP,0,0,640,360,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
     gfx::D3D12DeviceContext ctx;gfx::CommandSlotRing ring;Status status=Status::Ok;
@@ -27,11 +32,12 @@ int wmain(int argc,wchar_t** argv){
     ok=ok&&frame&&av_frame_get_buffer(frame,32)>=0;
     unsigned cycle=0;
     for(unsigned multiplier:{4u,6u,4u}){
+        if(temporal)break;
         if(!ok)break;
         ++cycle;
         pipeline::EnhanceGraphDesc desc;desc.sourceWidth=desc.workWidth=640;desc.sourceHeight=desc.workHeight=360;
         desc.enableNr=desc.enableSr=false;desc.enableFg=desc.rgbInput=true;desc.fgMultiplier=multiplier;
-        desc.runtimeAbsPath=(std::filesystem::path(VEYRA_PROJECT_ROOT)/"runtime_local/nvidia").wstring();
+        desc.runtimeAbsPath=runtimePath.wstring();
         ok=graph.initialize(desc)&&presenter.open(ctx,window,graph)&&graph.createViews();
         if(ok&&cycle==1){
             // A producer allocator stall must not be reported as private
@@ -95,9 +101,121 @@ int wmain(int argc,wchar_t** argv){
             }
         }
         ok=ok&&generated==38*(multiplier-1);
+        unsigned pendingOriginals=0;
+        for(unsigned i=40;ok&&i<56;++i){
+            // Expired/suppressed generated frames can be bypassed before their
+            // fences complete. The original must still wait for ALL FG reads
+            // on the producer queue before its presentation transition.
+            for(unsigned y=0;y<360;++y)for(unsigned x=0;x<640;++x){
+                auto* p=frame->data[0]+size_t(y)*frame->linesize[0]+x*4;
+                p[0]=uint8_t(24+i*3);p[1]=uint8_t(32+x/4);p[2]=uint8_t(48+y/3);p[3]=255;
+            }
+            pipeline::EnhanceGraph::FrameOutputs out;
+            ok=graph.process(frame,i*20.0,i==48,out,i+1);
+            if(!ok)break;
+            const auto& original=out.batch.frames[out.batch.count-1];
+            if(!out.gpuComplete())++pendingOriginals;
+            ok=original.kind==pipeline::FrameKind::Real&&
+                presenter.present(ctx,ring,graph,original.lease->slot,false,false,0,false,.5f,original.identity);
+            sink::RgbaImage shown,expected;
+            ok=ok&&presenter.readPresentedFrameForTest(ctx,ring,shown)&&
+                sink::readRgba8(ctx,ring,original.lease->texture.Get(),expected);
+            ok=ok&&shown.width==expected.width&&shown.height==expected.height&&shown.pixels.size()==expected.pixels.size();
+            if(ok){
+                for(size_t p=0;p<shown.pixels.size();++p)if(p%4!=3)
+                    maxError=std::max(maxError,std::abs(int(shown.pixels[p])-int(expected.pixels[p])));
+                ok=maxError<=2;
+            }
+            ok=ok&&graph.resolveGeneration(out);
+        }
+        ok=ok&&pendingOriginals>0;
+        std::cout<<"EARLY_ORIGINAL multiplier="<<multiplier<<" pending="<<pendingOriginals
+                 <<" maxPixelError="<<maxError<<" pass="<<ok<<std::endl;
         // Also exercise producer teardown first: it must cover consumer GPU reads.
         graph.shutdown();presenter.close();
         std::cout<<"PRESENTATION multiplier="<<multiplier<<" generated="<<generated<<" maxPixelError="<<maxError<<" pass="<<ok<<std::endl;
+    }
+    // Verify interpolation time against an independent moving-object oracle,
+    // including the first complete group after an explicit input discontinuity.
+    unsigned temporalFailures=0;
+    for(unsigned multiplier:{2u,4u,6u}){
+        if(!temporal)break;
+        if(!ok)break;
+        pipeline::EnhanceGraphDesc desc;desc.sourceWidth=desc.workWidth=640;desc.sourceHeight=desc.workHeight=360;
+        desc.enableNr=desc.enableSr=false;desc.enableFg=desc.rgbInput=true;desc.fgMultiplier=multiplier;
+        desc.runtimeAbsPath=runtimePath.wstring();
+        pipeline::ComPtr<ID3D12Resource> motion,upload;
+        if(exact){
+            motion=pipeline::makeTexture(ctx.device(),640,360,DXGI_FORMAT_R16G16_FLOAT,false);
+            upload=pipeline::makeUploadBuffer(ctx.device(),640ull*360*4);
+            ok=motion&&upload;desc.fgMotionProbe=motion.Get();
+        }
+        if(!ok)break;
+        ok=graph.initialize(desc)&&graph.createViews();
+        unsigned checked=0,violations=0;double worstPosition=0,worstGray=0;
+        for(unsigned i=0;ok&&i<20;++i){
+            const unsigned source=i+(i>=10?3:0);
+            const unsigned left=80+source*12;
+            if(exact){
+                void* data=nullptr;
+                if(FAILED(upload->Map(0,nullptr,&data))){ok=false;break;}
+                for(unsigned y=0;y<360;++y)for(unsigned x=0;x<640;++x){
+                    auto* p=static_cast<uint16_t*>(data)+(size_t(y)*640+x)*2;
+                    p[0]=i&&x>=left&&x<left+80&&y>=100&&y<260?0xca00:0; // binary16 -12
+                    p[1]=0;
+                }
+                upload->Unmap(0,nullptr);unsigned slot=0;auto* list=ring.acquireNext(slot,status);
+                if(!list){ok=false;break;}
+                D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                barrier.Transition={motion.Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,i?D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE:D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_COPY_DEST};
+                list->ResourceBarrier(1,&barrier);
+                D3D12_TEXTURE_COPY_LOCATION dst{},src{};dst.pResource=motion.Get();dst.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                src.pResource=upload.Get();src.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;src.PlacedFootprint.Footprint={DXGI_FORMAT_R16G16_FLOAT,640,360,1,640*4};
+                list->CopyTextureRegion(&dst,0,0,0,&src,nullptr);
+                barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_COPY_DEST;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+                list->ResourceBarrier(1,&barrier);
+                if(!ring.submitAndSignal(slot)||!ring.waitIdle()){ok=false;break;}
+            }
+            for(unsigned y=0;y<360;++y)for(unsigned x=0;x<640;++x){
+                auto* pixel=frame->data[0]+size_t(y)*frame->linesize[0]+x*4;
+                const bool object=x>=left&&x<left+80&&y>=100&&y<260;
+                pixel[0]=pixel[1]=pixel[2]=uint8_t(y<48?96:object?224:24);pixel[3]=255;
+            }
+            pipeline::EnhanceGraph::FrameOutputs out;
+            ok=graph.process(frame,source*(1000.0/60),i==0||i==10,out,source+1)&&ring.waitIdle()&&graph.resolveGeneration(out);
+            double previousPosition=-1;
+            for(unsigned j=0;ok&&j<out.batch.count;++j){
+                const auto& item=out.batch.frames[j];
+                const bool generated=item.kind==pipeline::FrameKind::Generated;
+                if(generated&&item.validity!=pipeline::GenerationValidity::Valid){ok=false;break;}
+                sink::RgbaImage pixels;
+                if(!sink::readRgba8(ctx,ring,item.lease->texture.Get(),pixels)){ok=false;break;}
+                double sum=0,weighted=0,gray=0;
+                for(unsigned y=120;y<240;++y)for(unsigned x=20;x<620;++x){
+                    const double weight=std::max(0.,double(pixels.pixels[(size_t(y)*640+x)*4])-120.);
+                    sum+=weight;weighted+=weight*x;
+                }
+                for(unsigned y=8;y<40;++y)for(unsigned x=16;x<624;++x)
+                    gray+=pixels.pixels[(size_t(y)*640+x)*4];
+                gray/=32*608;
+                const double position=sum>0?weighted/sum:-1000;
+                const double expected=80+(generated?source-1.+double(item.subframe)/multiplier:source)*12+39.5;
+                worstPosition=std::max(worstPosition,std::abs(position-expected));
+                worstGray=std::max(worstGray,std::abs(gray-96));
+                const bool valid=std::abs(position-expected)<=2.5&&std::abs(gray-96)<=2&&position>previousPosition;
+                std::cout<<"TEMPORAL multiplier="<<multiplier<<" source="<<source<<" sub="<<(generated?item.subframe:multiplier)
+                         <<" position="<<position<<" expected="<<expected<<" gray="<<gray<<" pass="<<valid<<std::endl;
+                if(!valid)++violations;
+                previousPosition=position;if(generated)++checked;
+                if(generated&&i==2&&!sink::saveImage((std::filesystem::path(argv[1])/(std::to_wstring(multiplier)+L"x-sub"+std::to_wstring(item.subframe)+L".png")).wstring(),pixels))ok=false;
+            }
+            if((i==0||i==10)&&out.batch.count!=1)ok=false;
+        }
+        ok=ok&&checked==18*(multiplier-1);
+        temporalFailures+=violations;
+        std::cout<<"TEMPORAL_SUMMARY multiplier="<<multiplier<<" exactMotion="<<exact<<" generated="<<checked<<" maxPositionError="<<worstPosition
+                 <<" maxGrayError="<<worstGray<<" violations="<<violations<<" pass="<<(ok&&!violations)<<std::endl;
+        graph.shutdown();
     }
     graph.shutdown();presenter.close();ring.drainQueue();
     unsigned errors=0;
@@ -107,5 +225,5 @@ int wmain(int argc,wchar_t** argv){
         if(SUCCEEDED(info->GetMessage(i,message,&bytes))&&message->Severity<=D3D12_MESSAGE_SEVERITY_ERROR){++errors;std::cerr<<message->pDescription<<'\n';}
     }
     std::cout<<"D3D12 errors="<<errors<<std::endl;
-    av_frame_free(&frame);ring.shutdown();ctx.shutdown();DestroyWindow(window);CoUninitialize();return ok&&!errors?0:1;
+    av_frame_free(&frame);ring.shutdown();ctx.shutdown();DestroyWindow(window);CoUninitialize();return !ok||errors?1:temporalFailures?3:0;
 }

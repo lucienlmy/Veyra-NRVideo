@@ -4,11 +4,13 @@
 #include "veyra/source/CaptureTiming.h"
 #include "veyra/source/CaptureMediaType.h"
 #include "veyra/source/NativeCaptureSink.h"
+#include <avrt.h>
 #include "veyra/source/CaptureBuffer.h"
 #include "veyra/source/CaptureFormatRank.h"
 #include "veyra/source/CaptureCodec.h"
 #include "veyra/source/CaptureCompressedDecoder.h"
 #include "veyra/source/AverMediaAudioSwitch.h"
+#include "veyra/source/ElgatoHdrControl.h"
 #include "veyra/pipeline/ColorMetadata.h"
 #include "veyra/Log.h"
 #include "veyra/sink/AudioFormat.h"
@@ -198,25 +200,25 @@ bool parseInt(std::wstring_view text,int& value){
     if(text.empty())return false;const std::wstring copy(text);size_t consumed=0;try{value=std::stoi(copy,&consumed);}catch(...){return false;}return consumed==copy.size();
 }
 bool parseUnsigned(std::wstring_view text,unsigned& value){int parsed=0;if(!parseInt(text,parsed)||parsed<0)return false;value=static_cast<unsigned>(parsed);return true;}
-struct CaptureSelection {unsigned videoIndex=0;int format=0;int audio=kCaptureAudioDisabled;unsigned colorOverride=0;double requestedFps=0;bool stable=false;std::wstring videoPath,audioPath;};
+struct CaptureSelection {unsigned videoIndex=0;int format=0;int audio=kCaptureAudioDisabled;unsigned colorOverride=0;double requestedFps=0;bool stable=false;std::wstring videoPath,audioPath,formatKey;};
 bool parseCapturePath(std::wstring_view path,CaptureSelection& selection){
     selection={};
     if(const auto query=path.find(L'?');query!=std::wstring_view::npos){
-        const auto value=path.substr(query+1);
-        if(!value.starts_with(L"fps=")||!parseCaptureFrameRate(value.substr(4),selection.requestedFps))return false;
+        std::wstring encodedKey;
+        if(!parseCapturePathOptions(path.substr(query+1),selection.requestedFps,encodedKey)||!decodePath(encodedKey,selection.formatKey))return false;
         path=path.substr(0,query);
     }
     constexpr std::wstring_view prefix=L"capture2:";
     if(path.starts_with(prefix)){
         std::array<std::wstring_view,5> fields{};size_t cursor=prefix.size();
         for(size_t i=0;i<fields.size();++i){const size_t end=path.find(L':',cursor);if(i+1<fields.size()){if(end==std::wstring_view::npos)return false;fields[i]=path.substr(cursor,end-cursor);cursor=end+1;}else{if(end!=std::wstring_view::npos)return false;fields[i]=path.substr(cursor);}}
-        if(fields[0].empty()||!decodePath(fields[0],selection.videoPath)||!parseInt(fields[1],selection.format)||!parseInt(fields[2],selection.audio)||!decodePath(fields[3],selection.audioPath)||!parseUnsigned(fields[4],selection.colorOverride)||selection.format<0||selection.colorOverride>2)return false;
+        if(fields[0].empty()||!decodePath(fields[0],selection.videoPath)||!parseInt(fields[1],selection.format)||!parseInt(fields[2],selection.audio)||!decodePath(fields[3],selection.audioPath)||!parseUnsigned(fields[4],selection.colorOverride)||selection.format<0||!validCaptureColorOverride(selection.colorOverride))return false;
         if(selection.audio!=kCaptureAudioDisabled&&selection.audio!=kCaptureAudioFromVideoDevice&&selection.audio!=kCaptureAudioWasapi&&selection.audio<0)return false;
         if((selection.audio>=0||selection.audio==kCaptureAudioWasapi)&&selection.audioPath.empty())return false;selection.stable=true;return true;
     }
     unsigned videoIndex=0,colorOverride=0;int format=0,audio=kCaptureAudioDisabled;const std::wstring legacy(path);
     const int fields=swscanf_s(legacy.c_str(),L"capture:%u:%d:%d:%u",&videoIndex,&format,&audio,&colorOverride);
-    if(fields<3||format<0||audio<kCaptureAudioFromVideoDevice||colorOverride>2)return false;
+    if(fields<3||format<0||audio<kCaptureAudioFromVideoDevice||!validCaptureColorOverride(colorOverride))return false;
     selection.videoIndex=videoIndex;selection.format=format;selection.audio=audio;selection.colorOverride=fields>=4?colorOverride:0;return true;
 }
 }
@@ -226,15 +228,26 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
     // One pending frame plus one reader-owned frame, never an IMediaSample
     // reference. Holding the producer's sole RGB32 sample starves its allocator.
     AVFrame* frame=nullptr;AVFrame* pendingFrame=nullptr;bool pending=false,callbackError=false,configured=false;
+    // Native path only: the callback copies the driver sample into
+    // stagingFrame WITHOUT holding the mailbox lock (a 4K NV12 copy is
+    // 1-3 ms and used to block tryRead for its whole duration, sweep
+    // 2026-09-22 C3), then publishes it by pointer swap.
+    AVFrame* stagingFrame=nullptr;bool stagingBusy=false;
+    // Owner wake event for tryRead callers that prefer an event over a timer
+    // (capture latency review item 2).
+    HANDLE frameEvent=nullptr;
     double pendingTime=0,lastPts=0,readAgeMs=0;bool pendingDiscontinuity=false,forceDiscontinuity=false;
     int64_t nominalDuration100ns=0;pipeline::Rational pendingDuration=pipeline::Rational::unknown();
     uint64_t received=0,dropped=0,lastDrop=0,sequence=0;
     uint64_t discontinuitySamples=0;
+    CaptureDriverDiscontinuity driverDiscontinuity;
+    uint64_t suppressedDriverDiscontinuities=0;
     Clock::time_point pendingArrival{},readArrival{},firstArrival{},latestArrival{};
     std::deque<Clock::time_point> recentArrivals;
     ComPtr<IGraphBuilder> graph;ComPtr<ICaptureGraphBuilder2> builder;ComPtr<IBaseFilter> device,grabFilter,nullFilter,audioFilter;ComPtr<IAMStreamConfig> config;ComPtr<ISampleGrabber> grab;ComPtr<IMediaControl> control;ComPtr<IMediaEvent> events;
     float lastAudioGain=-1;bool audioGainSupported=false;
     ComPtr<IBaseFilter> audioSink;ComPtr<IReferenceClock> referenceClock;
+    std::unique_ptr<ElgatoHdrControl> elgatoHdr;
     std::unique_ptr<sink::CaptureAudioSession> audioSession;
     // Dolby/DTS passthrough: when the device offers only compressed media types
     // the raw bursts are decoded here and the session is configured with the
@@ -286,6 +299,12 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
     // and swaps it into the mailbox once a frame is ready.
     struct CompressedSample{std::vector<uint8_t> payload;double time=0;Clock::time_point arrival;REFERENCE_TIME start=0,end=0;bool completeTime=false,bad=false,reset=false;};
     std::deque<CompressedSample> compressedQueue;size_t compressedQueueLimit=3;
+    // Recycled payload buffers: the callback used to allocate a fresh vector
+    // per sample under the mailbox lock (MJPEG 4K = several MB); the worker
+    // returns the buffer after decode (sweep 2026-09-22 C4).
+    std::vector<std::vector<uint8_t>> payloadPool;
+    std::vector<uint8_t> takePayload(){if(payloadPool.empty())return {};auto v=std::move(payloadPool.back());payloadPool.pop_back();v.clear();return v;}
+    void returnPayload(std::vector<uint8_t>&& v){if(payloadPool.size()<8){v.clear();payloadPool.push_back(std::move(v));}}
     std::thread decodeThread;std::condition_variable decodeWake;bool decodeStop=false;
     AVFrame* workerFrame=nullptr;uint64_t compressedDropped=0;double lastCallbackTime=0;
     // NV12 frames the decode worker may write into. A frame enters this pool
@@ -328,6 +347,7 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
             if(!draining){metadata.push_back(stamp);if(metadata.size()>64)metadata.pop_front();}
             const bool produced=compressedDecoder.decode(draining?nullptr:sample.payload.data(),draining?0:sample.payload.size(),
                 int64_t(sample.time*1e7),target,&decodedFrame,hardware);
+            if(!draining&&sample.payload.capacity()){std::lock_guard lock(mutex);returnPayload(std::move(sample.payload));}
             if(!produced){
                 draining=false;
                 // A decoder that needs more input before it can emit a frame is
@@ -380,23 +400,39 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
         }
     }
     HRESULT STDMETHODCALLTYPE SampleCB(double time,IMediaSample* sample)override{
+        // Register the DirectShow delivery thread with MMCSS once; the handle
+        // lives for the thread (revert happens when the thread exits).
+        static thread_local HANDLE mmcss=[]{DWORD index=0;HANDLE h=AvSetMmThreadCharacteristicsW(L"Pro Audio",&index);if(!h)log::warn("capture","MMCSS unavailable for the capture callback thread");return h;}();(void)mmcss;
         const auto arrival=Clock::now();BYTE* data=nullptr;
         REFERENCE_TIME sampleStart=0,sampleEnd=0;
         const bool sampleTime=sample&&sample->GetTime(&sampleStart,&sampleEnd)==S_OK;
         const bool valid=sample&&std::isfinite(time)&&SUCCEEDED(sample->GetPointer(&data))&&data&&
             (compressedPath?sample->GetActualDataLength()>0:sample->GetActualDataLength()>=LONG(layout.sampleBytes));
         bool enqueued=false;uint64_t timingSequence=0;int64_t copied100ns=0;double lockWaitMs=0,arrivalDeltaMs=0,ptsDeltaMs=0;
+        // Native path: claim the staging frame, copy outside the lock.
+        AVFrame* staged=nullptr;bool stagedOk=false;
+        if(valid&&!compressedPath){
+            {std::lock_guard lock(mutex);if(stagingFrame&&!stagingBusy){stagingBusy=true;staged=stagingFrame;}}
+            if(staged)stagedOk=copyCaptureSample(layout,data,size_t(sample->GetActualDataLength()),*staged,verticalFlip.load());
+        }
         {
             std::lock_guard lock(mutex);
             lockWaitMs=std::chrono::duration<double,std::milli>(Clock::now()-arrival).count();
             // The compressed path decodes in its own worker and keeps its own
             // frame pool, so the preallocated NV12 mailbox is legitimately
             // empty between reads; only the native path requires it here.
-            if(!valid||(!compressedPath&&!pendingFrame)){callbackError=true;}
+            if(!valid||(!compressedPath&&!pendingFrame)){callbackError=true;if(staged)stagingBusy=false;}
             else {
                 const double previous=compressedPath?lastCallbackTime:pendingTime;
                 if(received){arrivalDeltaMs=std::chrono::duration<double,std::milli>(arrival-latestArrival).count();ptsDeltaMs=(time-previous)*1000;}
-                const bool driverBreak=sample->IsDiscontinuity()==S_OK;
+                const bool driverFlag=sample->IsDiscontinuity()==S_OK;
+                const bool driverBreak=driverDiscontinuity.observe(driverFlag,!compressedPath,
+                    sampleTime&&sampleEnd>sampleStart,received>0,time-previous,arrivalDeltaMs/1000,info.averageFps);
+                if(driverFlag&&!driverBreak){
+                    ++suppressedDriverDiscontinuities;
+                    if(suppressedDriverDiscontinuities==1||suppressedDriverDiscontinuities%600==0)
+                        log::warn("capture-driver-flag",std::format("suppressed={} persistent raw-video discontinuity flag with continuous timestamps; ptsDeltaMs={:.4f} arrivalDeltaMs={:.4f}",suppressedDriverDiscontinuities,ptsDeltaMs,arrivalDeltaMs));
+                }
                 // Interframe packet PTS may move backwards in decode order.
                 // Apply cadence checks to decoded output, not B-frame packets.
                 const bool clockBreak=received&&(!compressedPath||codec==CaptureCodec::Mjpeg)&&
@@ -415,11 +451,12 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
                     // payload; the decode worker produces the NV12 frame.
                     const auto* payload=reinterpret_cast<const uint8_t*>(data);
                     const size_t bytes=size_t(sample->GetActualDataLength());
-                    CompressedSample entry;entry.payload.assign(payload,payload+bytes);
+                    CompressedSample entry;entry.payload=takePayload();entry.payload.assign(payload,payload+bytes);
                     if(compressedQueue.size()>=compressedQueueLimit){
-                        if(codec==CaptureCodec::Mjpeg){compressedQueue.pop_front();++compressedDropped;++dropped;entry.bad=true;}
+                        if(codec==CaptureCodec::Mjpeg){returnPayload(std::move(compressedQueue.front().payload));compressedQueue.pop_front();++compressedDropped;++dropped;entry.bad=true;}
                         else{
                             compressedDropped+=compressedQueue.size();dropped+=compressedQueue.size();
+                            for(auto& queued:compressedQueue)returnPayload(std::move(queued.payload));
                             compressedQueue.clear();entry.reset=true;entry.bad=true;
                             log::warn("capture-decode","compressed queue overflow: discard damaged history and recover at keyframe");
                         }
@@ -430,7 +467,17 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
                     lastCallbackTime=time;
                     compressedQueue.push_back(std::move(entry));enqueued=true;
                 }else{
-                    if(!copyCaptureSample(layout,data,size_t(sample->GetActualDataLength()),*pendingFrame,verticalFlip.load())){callbackError=true;wake.notify_one();return S_OK;}
+                    if(staged){
+                        stagingBusy=false;
+                        if(!stagedOk){callbackError=true;wake.notify_one();return S_OK;}
+                        // Publish: the copied frame becomes pendingFrame; the
+                        // previous pendingFrame is the next staging target.
+                        std::swap(stagingFrame,pendingFrame);
+                    }else{
+                        // Staging frame unavailable (should not happen once
+                        // configured); keep the locked copy as a safe fallback.
+                        if(!copyCaptureSample(layout,data,size_t(sample->GetActualDataLength()),*pendingFrame,verticalFlip.load())){callbackError=true;wake.notify_one();return S_OK;}
+                    }
                     if(pending)++dropped;
                     // Inspect consecutive callbacks, not consecutive mailbox reads.
                     // Preserve a driver/clock break when its sample is overwritten.
@@ -447,6 +494,7 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
             }
         }
         if(enqueued)decodeWake.notify_one();
+        if(frameEvent)SetEvent(frameEvent);
         if(timingSequence&&(timingSequence%120==0||lockWaitMs>5))log::info("capture-callback",std::format("source={} entryToLockMs={:.3f} entryToCopiedMs={:.3f} bytes={} compressed={} arrivalDeltaMs={:.3f} ptsDeltaMs={:.3f} sampleDurationMs={:.3f} (callback cost, not display latency)",timingSequence,lockWaitMs,(copied100ns-std::chrono::duration_cast<std::chrono::nanoseconds>(arrival.time_since_epoch()).count()/100)/10000.0,sample->GetActualDataLength(),compressedPath,arrivalDeltaMs,ptsDeltaMs,sampleTime?double(sampleEnd-sampleStart)/10000:-1));
         if(log::verboseFrameLogs()&&timingSequence)log::info("capture-ingress-sample",std::format("source={} arrival={} copied={} compressed={}",timingSequence,std::chrono::duration_cast<std::chrono::nanoseconds>(arrival.time_since_epoch()).count()/100,copied100ns,compressedPath));
         wake.notify_one();return S_OK;
@@ -454,7 +502,8 @@ struct CaptureCardSource::Impl:ISampleGrabberCB {
     HRESULT STDMETHODCALLTYPE BufferCB(double,BYTE*,long)override{return E_NOTIMPL;}
 };
 CaptureCardSource::CaptureCardSource():p_(std::make_unique<Impl>()){}
-CaptureCardSource::~CaptureCardSource(){close();}
+HANDLE CaptureCardSource::frameEvent()const{return p_->frameEvent;}
+CaptureCardSource::~CaptureCardSource(){close();if(p_->frameEvent){CloseHandle(p_->frameEvent);p_->frameEvent=nullptr;}}
 std::vector<CaptureDevice> CaptureCardSource::deviceDetails(bool audio){
     std::vector<CaptureDevice> result;
     for(auto& moniker:monikers(audio)){
@@ -470,9 +519,9 @@ std::vector<CaptureDevice> CaptureCardSource::deviceDetails(bool audio){
     return result;
 }
 std::vector<std::wstring> CaptureCardSource::devices(bool audio){std::vector<std::wstring> result;for(auto& device:deviceDetails(audio))result.push_back(std::move(device.name));return result;}
-std::wstring CaptureCardSource::makeCapturePath(unsigned videoIndex,const CaptureDevice& video,int format,int audioMode,const CaptureDevice* audio,unsigned colorOverride,double requestedFps){
-    if(!validCaptureFrameRate(requestedFps))return {};
-    const auto suffix=requestedFps>0?std::format(L"?fps={:.6f}",requestedFps):L"";
+std::wstring CaptureCardSource::makeCapturePath(unsigned videoIndex,const CaptureDevice& video,int format,int audioMode,const CaptureDevice* audio,unsigned colorOverride,double requestedFps,std::wstring_view formatKey){
+    if(!validCaptureFrameRate(requestedFps)||!validCaptureColorOverride(colorOverride))return {};
+    const auto suffix=capturePathOptions(requestedFps,encodePath(formatKey));
     if(audio&&audio->wasapi){
         if(video.path.empty()||audio->path.empty())return {};
         return std::format(L"capture2:{}:{}:{}:{}:{}{}",encodePath(video.path),format,kCaptureAudioWasapi,encodePath(audio->path),colorOverride,suffix);
@@ -551,8 +600,16 @@ void CaptureCardSource::videoReset(bool resetAudio){if(p_->wasapi)p_->wasapi->vi
 void CaptureCardSource::setAudioSync(unsigned mode,int offset){if(p_->wasapi)p_->wasapi->setSync(mode,offset);else if(p_->audioSession)p_->audioSession->setSync(mode,offset);}
 sink::CaptureAudioState CaptureCardSource::audioState()const{auto state=p_->wasapi?p_->wasapi->snapshot():p_->audioSession?p_->audioSession->snapshot():sink::CaptureAudioState{};if(!p_->audioError.empty())state.error=p_->audioError;return state;}
 bool CaptureCardSource::open(const SourceOpenDesc& desc){return configure(desc)&&start();}
-bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.clear();p_->lastAudioGain=-1;auto& p=*p_;CaptureSelection selection;if(!parseCapturePath(desc.path,selection))return false;const unsigned index=selection.videoIndex;const int format=selection.format;const int audio=selection.audio;
+bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.clear();p_->lastAudioGain=-1;auto& p=*p_;CaptureSelection selection;if(!parseCapturePath(desc.path,selection))return false;const unsigned index=selection.videoIndex;int format=selection.format;const int audio=selection.audio;
     if(selection.stable?!configuration(selection.videoPath,p.graph,p.builder,p.device,p.config):!configuration(index,p.graph,p.builder,p.device,p.config))return false;
+    const auto available=enumerateFormats(p.config.Get());
+    const auto* chosen=selectCaptureFormat(available,format,selection.formatKey);
+    if(!selection.formatKey.empty()&&!chosen){error_=L"保存的采集格式已不可用，请重新选择分辨率、帧率和像素格式。";return false;}
+    if(chosen)format=chosen->index;
+    // Capture the advertised identity before SetFormat: some drivers mutate
+    // their capability list to reflect the last negotiated rate/orientation.
+    const std::wstring selectedKey=chosen?chosen->key:L"";
+    const double expectedFps=selection.requestedFps>0?selection.requestedFps:chosen?chosen->fps:0;
     int count=0,size=0;if(FAILED(p.config->GetNumberOfCapabilities(&count,&size))||format<0||format>=count||size<=0||size>65536)return false;
     std::vector<BYTE> caps(size);AM_MEDIA_TYPE* native=nullptr;if(FAILED(p.config->GetStreamCaps(format,&native,caps.data())))return false;
     if(selection.requestedFps>0){
@@ -592,6 +649,11 @@ bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.cle
                 log::info("capture",std::format("DIB top-down request hr=0x{:08X} subtype=0x{:08X} accepted=0 bottomUp={} (keeping driver-declared orientation)",uint32_t(topDownHr),native->subtype.Data1,nativeLayout.bottomUp));
             }
         }
+    }
+    if(native->subtype!=requestedSubtype){
+        log::error("capture",std::format("Driver changed requested subtype 0x{:08X} to 0x{:08X}",requestedSubtype.Data1,native->subtype.Data1));
+        error_=L"采集卡返回的像素格式与所选格式不符，请重新选择采集格式。";
+        freeType(native);return false;
     }
     const bool direct=nativeSupported&&!desc.legacyCaptureRgbForDiagnostic;
     const CaptureCodec codec=captureCodecOf(native->subtype);
@@ -693,19 +755,34 @@ bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.cle
     if(p.cpuUnpack&&captureLegacyCpuLayout(p.layout))log::warn("capture-unpack",std::format("legacy CPU unpack path active packing={} format={} (per-pixel conversion stays on the callback thread)",int(p.layout.packing),int(p.layout.format)));
     const unsigned colorOverride=selection.colorOverride;
     log::info("capture-color",std::format("driver controlFlags=0x{:08X} colorInfoPresent={} transfer={} matrix={} primaries={} chroma={} override={}",p.layout.colorControlFlags,bool(p.layout.colorControlFlags&AMCONTROL_COLORINFO_PRESENT),int(p.layout.color.transfer),int(p.layout.color.matrix),int(p.layout.color.primaries),int(p.layout.color.chromaLocation),colorOverride));
-    if(colorOverride>2)return false;
-    if(colorOverride&&!compressedPath){
-        if(p.layout.format!=AV_PIX_FMT_P010&&p.layout.format!=AV_PIX_FMT_P016){log::error("capture-color","Explicit HDR requires P010/P016; select a 10/16-bit capture format");return false;}
-        p.layout.color.transfer=colorOverride==1?pipeline::TransferFunction::PQ:pipeline::TransferFunction::HLG;
-        p.layout.color.matrix=pipeline::YuvMatrix::BT2020NCL;p.layout.color.primaries=pipeline::ColorPrimaries::BT2020;
-        p.layout.color.transferAssumed=p.layout.color.matrixAssumed=p.layout.color.primariesAssumed=false;
-        log::info("capture-color",std::format("manual override={} BT2020; range retains negotiated metadata",colorOverride==1?"PQ":"HLG"));
+    if(!validCaptureColorOverride(colorOverride))return false;
+    auto elgatoHdr=std::make_unique<ElgatoHdrControl>();
+    if(!compressedPath&&p.layout.format==AV_PIX_FMT_P010){
+        std::wstring deviceName;
+        const auto devices=monikers(false);
+        for(size_t i=0;i<devices.size();++i){
+            if(selection.stable?monikerPath(devices[i].Get())==selection.videoPath:i==index){deviceName=propertyString(devices[i].Get(),L"FriendlyName");break;}
+        }
+        if(!elgatoHdr->configure(p.device.Get(),deviceName,true,colorOverride,p.layout.color)){
+            error_=L"Elgato HDR 输出模式设置失败，请关闭其他采集程序后重新连接，并检查日志中的 capture-elgato。";
+            return false;
+        }
+    }
+    if(colorOverride){
+        if(compressedPath){error_=L"压缩采集使用码流颜色信息；手动颜色和范围请选择原生采集格式。";log::error("capture-color","Manual color override requires raw capture; compressed override is not silently ignored");return false;}
+        const auto space=captureColorSpace(colorOverride);
+        if((space==1||space==2)&&p.layout.format!=AV_PIX_FMT_P010&&p.layout.format!=AV_PIX_FMT_P016){error_=L"手动 HDR 需要 P010/P016 格式；SDR 信号请选择自动或 Rec.709。";log::error("capture-color","Explicit HDR requires P010/P016");return false;}
+        applyCaptureColorOverride(p.layout.color,colorOverride);
+        log::info("capture-color",std::format("manual space={} range={} effective transfer={} matrix={} primaries={} range={} (0=auto, space 1=PQ 2=HLG 3=709, range 1=limited 2=full)",space,captureColorRange(colorOverride),int(p.layout.color.transfer),int(p.layout.color.matrix),int(p.layout.color.primaries),int(p.layout.color.range)));
     }
     p.info={};p.info.kind=pipeline::SourceKind::CaptureCard;p.info.width=p.layout.width;p.info.height=p.layout.height;p.info.averageFps=p.layout.duration>0?1e7/p.layout.duration:0;p.info.duration=pipeline::Rational::unknown();p.info.color=p.layout.color;
-    if(selection.requestedFps>0){
-        const bool accepted=captureFrameRateMatches(selection.requestedFps,p.layout.duration);
-        log::info("capture-rate",std::format("requestedFps={:.6f} connectedFps={:.6f} accepted={} softwareLimiter=0",selection.requestedFps,p.info.averageFps,accepted));
-        if(!accepted){error_=std::format(L"请求 {:.3f} FPS，但采集卡返回 {:.3f} FPS；请改用支持的帧率，或填 0。",selection.requestedFps,p.info.averageFps);return false;}
+    if(expectedFps>0){
+        const bool accepted=captureFrameRateMatches(expectedFps,p.layout.duration);
+        log::info("capture-rate",std::format("requestedFps={:.6f} connectedFps={:.6f} accepted={} softwareLimiter=0",expectedFps,p.info.averageFps,accepted));
+        if(!accepted){error_=std::format(L"所选格式为 {:.3f} FPS，但采集卡返回 {:.3f} FPS；请重新选择设备支持的格式。",expectedFps,p.info.averageFps);return false;}
+    }
+    if(chosen&&(p.info.width!=chosen->width||p.info.height!=chosen->height)){
+        error_=L"采集卡返回的分辨率与所选格式不符，请重新选择采集格式。";return false;
     }
     if(!compressedPath&&!colorOverride&&(p.layout.format==AV_PIX_FMT_P010||p.layout.format==AV_PIX_FMT_P016)&&p.info.color.transferAssumed)
         log::warn("capture-color","No explicit HDR transfer from driver; bit depth does not identify HDR. Keeping SDR fallback; manual PQ/HLG remains available.");
@@ -747,11 +824,15 @@ bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.cle
     }
     if(FAILED(p.graph.As(&p.control))||FAILED(p.graph.As(&p.events)))return false;
     if(p.grab&&(FAILED(p.grab->SetBufferSamples(FALSE))||FAILED(p.grab->SetCallback(&p,0))))return false;
-    for(auto** f:{&p.frame,&p.pendingFrame}){
+    for(auto** f:{&p.frame,&p.pendingFrame,&p.stagingFrame}){
         *f=av_frame_alloc();if(!*f)return false;
         (*f)->format=p.layout.format;(*f)->width=p.info.width;(*f)->height=p.info.height;
-        if(av_frame_get_buffer(*f,32)<0)return false;
+        // 256-byte row alignment matches the graph's D3D12 upload pitch, so
+        // the ingest copy is one memcpy per plane instead of one per row.
+        if(av_frame_get_buffer(*f,256)<0)return false;
     }
+    p.stagingBusy=false;
+    if(!p.frameEvent)p.frameEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
     if(compressedPath){
         // Write targets: the frame the worker is filling plus one spare handed
         // out by read(). Frames are never reused while the caller still owns
@@ -769,9 +850,9 @@ bool CaptureCardSource::configure(const SourceOpenDesc& desc){close();error_.cle
         p.decodeStop=false;p.decodeThread=std::thread([&p]{p.decodeLoop();});
         log::info("capture-decode",std::format("decode worker started queue={} backend={} (single decode thread; the parallel pool is a later refinement)",p.compressedQueueLimit,p.compressedDecoder.backendName()));
     }
+    p.elgatoHdr=std::move(elgatoHdr);
     p.configured=true;
-    reconnectDesc_=desc;reconnectInfo_=p.info;reconnectFormat_.clear();
-    for(const auto& candidate:enumerateFormats(p.config.Get()))if(candidate.index==format){reconnectFormat_=candidate.key;break;}
+    reconnectDesc_=desc;reconnectInfo_=p.info;reconnectFormat_=selectedKey;
     // Log the upstream type after DirectShow has finished negotiation. The
     // RGB32 output's nominal FPS alone is not proof of actual callback cadence.
     AM_MEDIA_TYPE* actual=nullptr;const auto formatHr=p.config->GetFormat(&actual);
@@ -1137,10 +1218,10 @@ bool CaptureCardSource::reconnect(float gain,unsigned syncMode,int offsetMs){
     int format=-1;for(const auto& candidate:formatsByPath(selection.videoPath))if(candidate.key==key){format=candidate.index;break;}
     if(format<0)return false;
     auto reopen=desc;reopen.path=std::format(L"capture2:{}:{}:{}:{}:{}",encodePath(selection.videoPath),format,selection.audio,encodePath(selection.audioPath),selection.colorOverride);
-    if(selection.requestedFps>0)reopen.path+=std::format(L"?fps={:.6f}",selection.requestedFps);
+    reopen.path+=capturePathOptions(selection.requestedFps,encodePath(key));
     bool ok=configure(reopen);
     if(ok){const auto& current=p_->info;
-        ok=current.width==expected.width&&current.height==expected.height&&current.color.pixelFormat==expected.color.pixelFormat&&
+        ok=current.width==expected.width&&current.height==expected.height&&captureFrameRateMatches(expected.averageFps,p_->layout.duration)&&current.color.pixelFormat==expected.color.pixelFormat&&
            current.color.transfer==expected.color.transfer&&current.color.matrix==expected.color.matrix&&current.color.primaries==expected.color.primaries&&
            current.color.range==expected.color.range&&current.color.displayReferred709==expected.color.displayReferred709&&current.color.preserveSdrCodeValues==expected.color.preserveSdrCodeValues;
         if(!ok)log::warn("capture-reconnect","Negotiated input contract changed; explicit reselection required");
@@ -1210,15 +1291,16 @@ SourceReadStatus CaptureCardSource::readWithWait(pipeline::FramePacket& packet,c
 void CaptureCardSource::close()noexcept{
     auto& p=*p_;if(p.control){const HRESULT hr=p.control->Stop();if(FAILED(hr))log::error("capture-close",std::format("Stop failed hr=0x{:08X}; releasing graph",uint32_t(hr)));}if(p.grab){const HRESULT hr=p.grab->SetCallback(nullptr,0);if(FAILED(hr))log::error("capture-close",std::format("detach callback hr=0x{:08X}",uint32_t(hr)));}
     if(p.wasapi)p.wasapi->stop();p.wasapi.reset();
+    p.elgatoHdr.reset();
     p.averMediaSwitch.stop();p.embeddedAudioUnavailable=false;
     if(p.audioSession)p.audioSession->stop();p.audioError.clear();
     if(p.audioPassthrough)p.audioPassthrough->close();
     p.events.Reset();p.control.Reset();p.grab.Reset();p.nullFilter.Reset();p.grabFilter.Reset();p.audioSink.Reset();p.audioFilter.Reset();p.config.Reset();p.device.Reset();p.builder.Reset();p.graph.Reset();p.referenceClock.Reset();p.audioSession.reset();p.audioPassthrough.reset();
-    if(p.decodeThread.joinable()){{std::lock_guard lock(p.mutex);p.decodeStop=true;p.compressedQueue.clear();}p.decodeWake.notify_all();p.decodeThread.join();}
+    if(p.decodeThread.joinable()){{std::lock_guard lock(p.mutex);p.decodeStop=true;p.compressedQueue.clear();p.payloadPool.clear();}p.decodeWake.notify_all();p.decodeThread.join();}
     if(p.workerFrame)av_frame_free(&p.workerFrame);
     for(auto*& frame:p.compressedFree)if(frame)av_frame_free(&frame);
     p.compressedFree.clear();
-    av_frame_free(&p.frame);av_frame_free(&p.pendingFrame);
+    av_frame_free(&p.frame);av_frame_free(&p.pendingFrame);av_frame_free(&p.stagingFrame);p.stagingBusy=false;
     if(p.pendingHardware)av_frame_free(&p.pendingHardware);if(p.hardwareRead)av_frame_free(&p.hardwareRead);
     p.compressedDecoder.close();
     if(p.decodeDevice){p.decodeDevice->Release();p.decodeDevice=nullptr;}if(p.decodeQueue){p.decodeQueue->Release();p.decodeQueue=nullptr;}
@@ -1226,5 +1308,6 @@ void CaptureCardSource::close()noexcept{
     p.info={};
     p.sequence=p.received=p.dropped=p.lastDrop=0;p.pending=p.callbackError=p.configured=p.forceDiscontinuity=false;p.lastPts=p.readAgeMs=0;
     p.recentArrivals.clear();
+    p.driverDiscontinuity.reset();p.suppressedDriverDiscontinuities=p.discontinuitySamples=0;
 }
 }

@@ -40,7 +40,17 @@ void refresh(){auto s=engine->snapshot();const wchar_t* names[]={L"上传/颜色
      <<L"\r\n命令槽占用 "<<c.commandSlotsInFlight<<L" / 6；观察峰值 "<<c.commandSlotHighWater<<L"；呈现批次峰值 "<<c.presentationBatchHighWater<<L" / 2"
      <<L"\r\n槽复用等待 "<<f.slotReuseWaitCount<<L" 次 / "<<value(f.slotReuseWaitMs)<<L" ms\r\n";
     o<<L"光流请求："<<flowName<<L"；实际SDK perf="<<s.flowPerf<<L"；grid=4（已验证SDK能力）\r\n内容节奏："<<(s.contentFps?std::to_wstring(s.contentFps)+L"fps":L"未确认（静态或证据不足）")<<L"；保留源时间戳，重复内容不计有效生成\r\n"<<s.status;
-    setText(GetDlgItem(window,1),o.str());
+    // Preserve the reader's scroll position and selection across the
+    // 250 ms refresh (the text differs almost every tick).
+    HWND edit=GetDlgItem(window,1);
+    const auto firstLine=SendMessageW(edit,EM_GETFIRSTVISIBLELINE,0,0);
+    DWORD selStart=0,selEnd=0;SendMessageW(edit,EM_GETSEL,WPARAM(&selStart),LPARAM(&selEnd));
+    const auto text=o.str();
+    wchar_t old[8]{};GetWindowTextW(edit,old,8);
+    SetWindowTextW(edit,text.c_str());
+    if(selEnd>selStart)SendMessageW(edit,EM_SETSEL,selStart,selEnd);
+    const auto nowFirst=SendMessageW(edit,EM_GETFIRSTVISIBLELINE,0,0);
+    if(firstLine!=nowFirst)SendMessageW(edit,EM_LINESCROLL,0,firstLine-nowFirst);
 }
 void arrange(){RECT r{};GetClientRect(window,&r);int width=MulDiv(r.right,96,veyra::ui::layoutDpi(window)),height=MulDiv(r.bottom,96,veyra::ui::layoutDpi(window));auto pos=[&](int id,int x,int y,int w,int h){MoveWindow(GetDlgItem(window,id),dip(window,x),dip(window,y),dip(window,std::max(1,w)),dip(window,std::max(1,h)),TRUE);};bool wide=width>=700;pos(6,width-56,8,40,32);pos(7,16,10,width-80,32);pos(1,16,52,wide?width/2-24:width-32,wide?height-116:height/2-68);pos(2,wide?width/2+8:16,wide?96:height/2+36,wide?width/2-24:width-32,wide?height-160:height/2-100);pos(3,wide?width/2+8:16,wide?52:height/2-8,wide?width/2-24:width-32,36);pos(4,16,height-52,width/2-24,36);pos(5,width/2+8,height-52,width/2-24,36);}
 LRESULT CALLBACK proc(HWND h,UINT m,WPARAM w,LPARAM l){switch(m){case WM_CREATE:{preview.clear();window=h;font=makeFont(h,13);auto add=[&](const wchar_t* c,const wchar_t* t,int id,DWORD style){auto child=CreateWindowExW(0,c,t,WS_CHILD|WS_VISIBLE|style,0,0,1,1,h,reinterpret_cast<HMENU>(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);themeControl(child);};
@@ -50,7 +60,7 @@ case WM_PAINT:{PaintBuffer paint(h);fillSurface(paint.dc,paint.rect,h);return 0;
 case WM_SIZE:arrange();return 0;
 case WM_CTLCOLORSTATIC:case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:case WM_CTLCOLORBTN:return colors(m,w,l);
 
-case WM_TIMER:refresh();return 0;
+case WM_TIMER:if(!IsWindowVisible(h))return 0;refresh();return 0;
 case WM_COMMAND:if(LOWORD(w)==6){SendMessageW(GetParent(h),WM_APP+43,0,0);}else if(LOWORD(w)==3){preview=wide(Logger::instance().diagnosticReport());SetDlgItemTextW(h,2,preview.c_str());}else if(LOWORD(w)==4&&!preview.empty()){
     if(OpenClipboard(h)){HGLOBAL data=GlobalAlloc(GMEM_MOVEABLE,(preview.size()+1)*sizeof(wchar_t));if(data){if(void* p=GlobalLock(data)){memcpy(p,preview.c_str(),(preview.size()+1)*sizeof(wchar_t));GlobalUnlock(data);EmptyClipboard();if(!SetClipboardData(CF_UNICODETEXT,data))GlobalFree(data);}else GlobalFree(data);}CloseClipboard();}
 }else if(LOWORD(w)==5)ShellExecuteW(h,L"open",runtime::logsDirectory().c_str(),nullptr,nullptr,SW_SHOW);return 0;

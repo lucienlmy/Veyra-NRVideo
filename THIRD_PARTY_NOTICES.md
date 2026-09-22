@@ -2,6 +2,28 @@
 
 NVIDIA SDKs and runtimes are excluded from source control. The publisher-authorized experimental Release package contains only selected runtime DLLs and applicable notices, as documented in `docs/RUNTIME_COMPONENTS_0.0.2.md`. This is not vendor endorsement or a general redistribution grant. ReShade/RenoDX add-ons are not loaded or distributed by the product.
 
+## Elgato MK.2 capture control
+
+MIT adaptations in `src/source/ElgatoHdrControl.cpp` and its header:
+
+- https://github.com/elgatosf/capture-device-support at
+  `fe9630974d47f51bf54826e72fb8b654e620aa93`, `SampleCode/DriverInterface.cpp`
+  and `Library/HDMIInfoFramesAPI.h`: private property GUID, IDs 720/721/722,
+  two-part HDR packet and hardware HDR-to-SDR control protocol. Copyright
+  (c) 2022 Corsair Memory, Inc.
+- https://github.com/nitlink-dev/nitlink at
+  `4f8a723406f63c6e92832488a6022fcf25233871`,
+  `src/capture/elgato_hdr_control.cpp` and `elgato_device_identity.h`:
+  exact MK.2 aliases, packet read size checks and hardware/native HDR pairing.
+  Copyright (c) 2026 NitLink Contributors.
+
+Veyra changes: use the already selected DirectShow filter instead of opening
+another device; scope to MK.2/P010; validate packet length/type/checksum;
+retain manual overrides; log HRESULT/readback and restore a readable initial
+tonemap value on close. No vendor shader, SDK header or binary is vendored.
+No global color/chroma formula change. Full license:
+`licenses/capture/ELGATO_NITLINK_MIT.txt`.
+
 ## NVENC API declarations
 
 Source: https://github.com/FFmpeg/nv-codec-headers ; encoder ABI baseline `e844e5b26f46bb77479f063029595293aa8f812d` (tag `n13.0.19.0`, SDK 13.0 declarations), stored only under ignored `third_party_local/nvidia/nv-codec-headers-13.0`. Stage with `git clone --depth 1 --branch n13.0.19.0 https://github.com/FFmpeg/nv-codec-headers.git third_party_local/nvidia/nv-codec-headers-13.0`. CMake accepts `VEYRA_NVENC_HEADERS_ROOT`; compilation checks major/minor 13.0. The previous 13.1 checkout `eddcea9e27f6b772057c9b3f87de2cc1737faffc` remains unmodified for other local tools. Veyra now queries the driver's maximum API before creating the 13.0 function table/session and uses the same ABI for every structure, without pretending that a version-number-only downgrade changes structure layouts. No header or runtime is copied into source control.
@@ -23,6 +45,36 @@ Source: https://github.com/Coldwood1026/OptiScaler , commit `70676c5f037c8c26f1e
 The provider DLL on disk is never modified, re-signed or renamed; only the mapped image of the process is patched, and every patched byte is restored when the XeFG/XeLL contexts are destroyed. Because Veyra itself is GPLv3, the ported GPL-3.0 code is compatible; the upstream authorship above is attributed here. Locked provider identity: `libxess_fg.dll` 1.3.1.78, 22,957,432 bytes, SHA-256 `EC5E0C65E075570C6EDE72618BB666D0BE0C2E10B2EA9762C0FE8CB8E375AB27`, PE TimeDateStamp `0x69CB0F4D`, SizeOfImage `0x015ED000`.
 
 XeSS pacing adaptation (2026-09-19): `include/veyra/gfx/XessPacing.h` and `src/gfx/XessPacing.cpp` also adapt the above pinned OptiScaler `XeFGPacing.h` NoteFrame/PaceFrame/WaitUntil logic: a bounded 15-period median, generated-frame deadlines, and the provider-owned tail limiter condition. Veyra retains its audited call-site hooks, adds synchronized statistics and complete hooked-present-return gap measurements, and does not port upstream timestamp hooks. Provider scheduling remains preferred; wall-clock pacing is used only when its scheduler is unavailable. No on-disk runtime changes.
+
+XeSS read-only timing diagnostics (2026-09-21): the timestamp callback ABI and
+pinned provider locations (0x3430 / 0x224B30) were cross-checked against
+SAOG0721/Magpie commit `3841698348bfb246623d4acf791984c8b68a577b`,
+`src/Magpie.Core/XeSSFGPacing.h` (GPL-3.0). Veyra's trace-only hook records
+the native deadline without modifying it. The upstream deadline rewrite is
+not ported. The audited DLL remains unchanged on disk.
+
+Read-only fence attribution additionally checks the same pinned provider's
+scheduler at 0x21EE30: context+0x328 is the ID3D12Fence queried at 0x21EECF,
+and timestamp lookup+0x18 holds the target tested at 0x21EEEB. Veyra samples
+GetCompletedValue around its synchronous scheduler call only when tracing;
+no fence value, event, deadline or queue submission is modified.
+
+### Magpie NR temporal residual route (2026-09-20)
+
+Veyra's optional `src/pipeline/NrTemporalPass.cpp` and
+`shaders/NrTemporal.hlsl` adapt the motion-guided residual-history design from
+SAOG0721/Magpie, commit
+`3841698348bfb246623d4acf791984c8b68a577b`,
+`src/Magpie.Core/DLSSNRTemporalShader.h` (GPL-3.0). The Veyra version keeps
+the existing D3D12 graph, uses its source motion extent and signed HDR working
+space, and adds its own resource/reset plumbing; it is not a binary or runtime
+copy. The 2026-09-21 adaptation distinguishes explicit protection masks from
+valid zero residual observations, excludes protected/feathered history, and
+rejects invalid source time intervals. A Veyra groupshared tile reuses the
+upstream-derived neighborhood observations without changing their tap order.
+Product D3D12 regression coverage is in
+`tests/integration/NrTemporalGpuTests.cpp`. The switch is default-off until affected RTX hardware and motion-scene
+quality tests reject ghosting and flicker regressions.
 
 ## AMD FidelityFX Optical Flow
 

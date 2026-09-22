@@ -131,14 +131,16 @@ ID3D12GraphicsCommandList* CommandSlotRing::acquire(uint32_t slot, Status& statu
         }
     }
 
-    if(target.timed && timingReadback_) {
+    static const bool profileSlots=GetEnvironmentVariableW(L"VEYRA_PROFILE_SLOTS",nullptr,0)>0;
+    if(target.timed && timingReadback_ && (profileSlots||veyra::log::verboseFrameLogs())) {
         uint64_t* data=nullptr;D3D12_RANGE range{slot*2*sizeof(uint64_t),(slot*2+2)*sizeof(uint64_t)};
         if(SUCCEEDED(timingReadback_->Map(0,&range,reinterpret_cast<void**>(&data)))) {
             const uint64_t begin=data[slot*2],end=data[slot*2+1];
-            if(end>=begin&&gpuCommandTimesMs_.size()<16384){const double ms=double(end-begin)*1000.0/timestampFrequency_;gpuCommandTimesMs_.push_back(ms);if(!target.label.empty()&&veyra::log::verboseFrameLogs())veyra::log::info("gpu-profile",std::format("{} {:.4f} ms",target.label,ms));}
+            if(end>=begin){const double ms=double(end-begin)*1000.0/timestampFrequency_;if(gpuCommandTimesMs_.size()<16384)gpuCommandTimesMs_.push_back(ms);else gpuCommandTimesMs_[gpuCommandTimesCursor_++%16384]=ms;if(!target.label.empty()&&veyra::log::verboseFrameLogs())veyra::log::info("gpu-profile",std::format("{} {:.4f} ms",target.label,ms));}
             D3D12_RANGE empty{0,0};timingReadback_->Unmap(0,&empty);
         }target.timed=false;target.label.clear();
     }
+    target.timed=false;
     HRESULT result = target.allocator->Reset();
     if (FAILED(result)) {
         status = Status::DeviceFailure;

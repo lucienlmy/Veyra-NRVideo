@@ -1,5 +1,148 @@
 # 当前项目状态 / Current Status
 
+## 最新入口：统一修复计划（2026-09-22）
+
+分支 `codex/fg-independent-repair-20260922`（存档 `checkpoint/pre-fg-independent-repair-20260922`）。
+已实施并短测的 FG 修复见 [执行记录](FG_INDEPENDENT_REPAIR_EXECUTION_2026-09-22.md)：
+XeSS 真实源周期提示、有界跳帧保留历史、DLSS 超预算对改 2X 组、显示帧统计；
+X2/X3 已撤回。[统一修复计划](UNIFIED_REPAIR_PLAN_2026-09-22.md) 第 1–9 批已实施（标签
+`checkpoint/plan-b9-done-20260922`），结果、XeSS 复跑排查（时段差异，非回归）、
+直写 upload 堆的实测否决与专业模式延迟实测见
+[执行记录](UNIFIED_REPAIR_EXECUTION_2026-09-22.md)；
+依据为 [全软件清扫](WHOLE_SOFTWARE_SWEEP_2026-09-22.md) 与
+[采集延迟复查](CAPTURE_LATENCY_REVIEW_2026-09-22.md)。运行入口
+`E:/项目/Veyra/tests/fg-independent-repair-20260922/app/veyra.exe`（staging，非便携包）。
+长测、实卡、肉眼验收由用户执行；未合并 main、未推送、未发布。下文为历史状态。
+
+## 最新结果：有界修复收尾（2026-09-22）
+
+本轮已完成有限范围的实施与验收；下节“只出方案”为历史记录。
+开工存档 `7724ea8` / `checkpoint/pre-bounded-repair-20260922`，
+当前分支 `codex/bounded-full-chain-20260922`。
+保留修复：HDR 查询状态按显示器隔离 `f718c02`，采集格式身份恢复及协商核对
+`7fe6201`，分别有 `checkpoint/hdr-target-state-20260922` 和
+`checkpoint/capture-format-contract-20260922`；此前 P010 上传优化继续保留。
+完整证据见 [有界修复执行记录](BOUNDED_REPAIR_EXECUTION_2026-09-22.md)。
+
+产品构建、相关 UI/字幕/颜色/预设、后端切换、暂停 seek、实卡格式重连通过。
+独立的运动矩形诊断在 DLSS 6X 位置误差门槛失败，已记录，不能列入通过项。
+RTX5070 原生视频+NR：DLSS2 末段约120提交/s，DLSS6约287但P99仍16.79ms；
+真超分+NR：DLSS6约148提交/s，XeSS4约40源提交/s。均为有界追踪末段，
+不是整段均值或物理屏幕FPS，也没有同期旧版A/B证明本轮性能收益。
+
+高倍率不均匀、欠速闪烁、间歇卡顿及历史 XeSS 重负载倒退仍未解决。
+本轮没有新的产品调度改动；查过 Intel/Magpie 合同后未确认可靠的新修复点，
+按用户要求停止无依据的性能尝试，既不宣称全是硬件瓶颈，也不宣称全部修好。
+未重新验收的设备/功能及未交付项见总台账。本机开发运行入口：
+`E:/项目/Veyra/tests/bounded-repair-20260922/app/veyra.exe`，依赖本机链接，非便携包。
+本轮没有打包、合并 main、推送或发布；关机由最终交接执行。
+
+## 当前任务：全链路回归复核，只出方案（2026-09-22）
+
+完整问题入口：[全软件问题台账及历史 DLSS/XeSS 专项](WHOLE_PRODUCT_ISSUE_LEDGER_2026-09-22.md)。
+历史 DLSS 6X 的高提交率/长空档、真超分+NR 下 XeSS 4X 相对 1.4.3 的源连续性倒退
+仍未解决，列为第一优先级；最新采集日志不取代这些问题。台账同时列出其他模块的
+未解决项、代码/功能缺口、已有修复的实机验收边界和暂缓项，不把它们一概标成新 bug。
+
+最新入口：[卡顿、闪烁与采集清晰度全链路方案](FULL_CHAIN_REGRESSION_REPAIR_PLAN_2026-09-22.md)。
+当前开发分支 `codex/5090-capture-fg-20260921`，HEAD `edfd886`，仍在
+`E:/项目/Veyra/worktrees/playback-nr-20260920`。下方分支名和“下一步”属于历史状态。
+
+新用户日志的 8 次图初始化均关闭 SR/NR/FG/NVOF；4K30 P010 有约 1.18/1.31 秒
+真实回调来帧间隔。上游停供、应用回调阻塞与线程调度仍未区分，不能归因于补帧。
+另确认采集最近打开只持有数字格式索引、默认重连帧率核对缺失的合同风险；
+日志中有手动改模式，不能称用户已遭静默降级。采集色度/最终缩放路径差异单独验清晰度。
+
+用户要求先排查和写方案，本轮未新增产品代码或运行测试。既有未提交 HDR 查询
+三态候选仅构建未运行，SDR 呈现资源测试通过不等于用户欠速闪烁通过。
+“约 15 秒”不作为固定计时器假设；DLSS/XeSS 从 2X 到各自最高倍率一起覆盖。
+已失败的扩队列、固定等待、拆 owner、重叠、全局取消 admission 等未列为新施工项。
+没有新增包、提交、合并、推送或发布；用户实际闪烁和间歇卡顿仍未解决。
+
+## 最新实修：5090 P010 采集反馈（2026-09-21）
+
+工作分支 `codex/5090-capture-fg-20260921`，开工存档 `3953bff`。
+已去掉 CPU P010/P016 上传前的冗余转换/复制；本机两轮 P010 上传中位耗时
+约 2.4ms 降至 0.93–0.98ms，18 项实际 GPU 像素输出与基线完全一致，HDR
+颜色测试及 DLSS 呈现资源回归通过。不改变画质、倍率或增加等待。
+这不是 5090 整链路帧率验收；15 秒卡顿、欠速闪烁、高倍率不均匀仍未解决。
+实测工况、范围和证据见 [5090 采集修复记录](RTX5090_CAPTURE_FG_REPAIR_2026-09-21.md)。
+未更新既有便携包；本轮仅本地构建，无合并、推送或发布。
+
+## 当前执行入口（2026-09-21，链路复核后）
+
+1.4.3 之后的完整修复、回退、诊断和未完成项总账见
+[POST_1_4_3_REPAIR_LEDGER_2026-09-21](POST_1_4_3_REPAIR_LEDGER_2026-09-21.md)。
+
+此前研究方案：[DLSS / XeSS 补帧执行与呈现重构](FG_RUNTIME_REPAIR_PLAN_2026-09-21.md)。
+基于 `b69d22c`、固定 Magpie 源码、Intel SDK 合同和既有测试；本轮仅更新文档，
+未实施重构、未运行新性能测试。方案覆盖 2X、DLSS 最高 6X 与 XeSS 最高 4X，
+先核对资源和线程合同，只修有证据的时间/准入或资源错误；不再把关键路径重叠列为默认待办。当前不能承诺
+所有硬件与负载有 90% 成功率；高倍率稳定性和 30/40 本轮实卡验收仍未完成。
+
+本轮另生成两个 1.4.4 XeSS A/B 测试包：当前 XeSS 与仅恢复 1.4.3 XeSS
+实现的对照包。两包都保留同一 1.4.4 其他修复，短测均能进入 XeSS 4X；
+路径、差异和限制见 [1.4.4 XeSS A/B 对照](XESS_1_4_4_AB_COMPARE_2026-09-21.md)。
+
+继续优化前先查 [实验索引与重试约束](FG_EXPERIMENT_INDEX_2026-09-21.md)：
+区分已删除的失败实验、默认关闭的未验收候选和只读诊断，禁止无新证据重复已失败方案。
+已同步并复核 [Magpie 最新 experimental 源码](MAGPIE_SCHEDULING_SOURCE_AUDIT_2026-09-21.md)：
+上游仍为3841698；其DLSS最高4X且逐生成帧等待，XeSS包含时间戳改写和独立队列交接，不能直接推断性能更好。
+
+既有执行与其他功能收尾：[补帧稳定性与现有功能收尾](FG_STABILITY_COMPLETION_PLAN_2026-09-21.md)。
+用户已授权执行；源帧关联诊断已构建并运行，XeSS真实源时间提示候选在120秒测试中保持吞吐收益，
+整段统计仍发现约四分之一的输出间隔短于1ms及约46ms的偶发长间隔；后端/倍率切换回归通过。
+尚未通过完整节奏/画质验收，默认仍关闭。详见
+[本轮诊断与候选](FG_STABILITY_PROGRESS_2026-09-21.md)。
+新增只读 fence 追踪：重负载保留的351次首帧调度全部在进入时有未完成GPU依赖，
+不能把约8.5ms的前段耗时全部当作无效等待删除；仍需区分队列积压、GPU工作与唤醒。
+诊断版后端切换回归通过，尚无新增已接受的调度优化。
+后续“XeSS仅保留一组待处理”实验降低了突发与帧龄，但源帧吞吐退步，已撤回并重新构建。
+DLSS旧证据复核确认重负载整组空档主要伴随预算拒绝/历史播种；同组GPU耗时也超过60fps预算，
+尚不能归结为纯调度故障或直接取消预算检查。具体数字见WORKLOG最新条目。
+开发工作区为 `E:/项目/Veyra/worktrees/playback-nr-20260920`，
+分支 `codex/fg-stability-20260921`；开工存档 `d2ae8ee`，诊断存档 `0143baf`。
+正式版仍为1.4.3，最新本地交付仍为下述1.4.4beta。
+
+- **XeSS**：真实1080p到4K超分＋NR＋4X的源帧连续性比1.4.3差；旧版反复
+  关闭补帧，不能直接恢复它并宣称4X修好。果冻感、功耗波动尚未解决。
+- **DLSS**：4X/6X重负载均匀呈现仍未通过；不能将原生4K输入的高FPS套用到真实超分。
+- **输出限制**：默认不限制；XeSS/FSR输出限帧尚未完成。
+- **NR**：防闪默认关闭、部分样本验证通过，快速游戏画质及重负载有待验收；
+  独立降噪未接入，模型风格仍为0/1/2，NR叠层继续暂缓。
+- **UI/字幕/采集**：已有修复和局部回归不撤销；快速滚动、物理跨屏、受影响
+  设备及HDR浮窗观感不得算全面通过。杜比视界新处理继续暂缓。
+
+最新同条件证据见[版本对照](RELEASE_143_SCHEDULING_COMPARISON_2026-09-21.md)，
+原因与未知项见[链路审查](FG_PIPELINE_REASSESSMENT_2026-09-21.md)。
+下文按历史顺序保留；“未发现回退”“通过”“最新”等只适用于对应日期和工况，
+与本节冲突时以本节及其引用证据为准。
+
+## 既有交付与历史记录
+
+2026-09-21 local test package delivered from source checkpoint `f029707`:
+`E:/项目/Veyra/test-packages/1.4.4beta-20260921-nr-followup/`.
+Seven portable smokes, packaged DLSS/XeSS switching and 124-file ZIP
+verification pass. This is partial capability acceptance; the true-SR
+high-multiplier cadence and independent denoise limitations below remain.
+
+2026-09-21 follow-up: retained temporal mask/time corrections and GPU
+neighborhood reuse; fixed repeated Present-deviation sampling and added
+separate entry/return diagnostics. NR temporal remains default-off.
+Local 120-second DLSS/XeSS 4X tests with original 4K (SR bypass) pass;
+true 1080p-to-4K SR plus NR fails 4X/6X cadence acceptance. Independent
+VFX denoise cannot create its effect and is not integrated. No fixed delay,
+hidden downshift, new runtime, main merge or publication. Detailed results:
+[current follow-up acceptance](NR_FG_FOLLOWUP_ACCEPTANCE_2026-09-21.md).
+This supersedes the timing interpretation and pending tests below.
+
+2026-09-21 local bounded NR/performance review: temporal protection/time fixes
+and shared-neighborhood GPU optimization tested on RTX 5070. Default remains
+off; natural-video visual acceptance and independent VFX denoise are not
+delivered. No general 1.4.3 performance regression established. See
+[evidence and limits](NR_QUALITY_PERFORMANCE_ACCEPTANCE_2026-09-21.md).
+No new release or main merge.
+
 **2026-09-20：1.4.3 已正式发布为 [GitHub Latest](https://github.com/Likely7/Veyra-NRVideo/releases/tag/v1.4.3)。** 发布源码/标签对应 `3b4570e`，正确修复已整合至 main；正式便携包七项检查、120 个载荷校验、对应源码 856 个文件校验及四项远端资产哈希核对通过。用户最新测试包与正式 EXE 完全相同。固定 6X 均匀呈现及未定因设备反馈仍按下方边界处理。发布记录见 [RELEASE_1.4.3_EXECUTION.md](RELEASE_1.4.3_EXECUTION.md)。
 
 2026-09-20：用户验收最新 1.4.3 测试包并授权正式发布。当前发布工作包含截至 `139db25` 的产品修复及远端中文 README 精简，分支审计与正式构建/发布结果统一记录在 [1.4.3 发布执行记录](RELEASE_1.4.3_EXECUTION.md)。下方“仅本地/未发布”语句均为历史阶段记录；固定 6X 均匀呈现仍未解决，不随正式版发布改为通过。

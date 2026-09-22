@@ -20,7 +20,7 @@ void VideoPresenter::sourceProcessed(pipeline::FrameIdentity identity){
     xessWork_[xessWorkPosition_]={identity,xessInputId_};
     xessWorkPosition_=(xessWorkPosition_+1)%xessWork_.size();xessInputId_=0;
 }
-bool VideoPresenter::open(gfx::D3D12DeviceContext& ctx,HWND window,pipeline::EnhanceGraph& graph,bool captureCompatible) {
+bool VideoPresenter::open(gfx::D3D12DeviceContext& ctx,HWND window,pipeline::EnhanceGraph& graph,bool captureCompatible,bool mediaClockPaced) {
     close();
     viewWidth_=viewHeight_=0;bufferMonitor_=nullptr;monitorWidth_=monitorHeight_=0;
     ++generation_;
@@ -38,7 +38,15 @@ bool VideoPresenter::open(gfx::D3D12DeviceContext& ctx,HWND window,pipeline::Enh
     gpuTimer_.initialize(ctx.device(),queue);window_=window;RECT rc{};GetClientRect(window,&rc);
     gfx::PresentSink::Desc d;d.targetWindow=window;d.width=std::max(1L,rc.right);d.height=std::max(1L,rc.bottom);d.vsync=false;
     d.waitable=!GetEnvironmentVariableW(L"VEYRA_TEST_LEGACY_SWAPCHAIN",nullptr,0);
-    d.hdr=graph.hdrOutput();d.hdr10=graph.hdr10Output();d.xess=graph.xessEnabled();d.fsr=graph.fsrEnabled();d.renderWidth=graph.workWidth();d.renderHeight=graph.workHeight();d.captureCompatible=captureCompatible;d.fgMultiplier=graph.fgMultiplier();lastXessFrame_={};lastXessIdentity_={};xessWasEnabled_=false;lastFsrFrame_={};lastFsrIdentity_={};fsrWasEnabled_=false;
+    d.hdr=graph.hdrOutput();d.hdr10=graph.hdr10Output();d.xess=graph.xessEnabled();d.fsr=graph.fsrEnabled();d.renderWidth=graph.workWidth();d.renderHeight=graph.workHeight();d.captureCompatible=captureCompatible;d.fgMultiplier=graph.fgMultiplier();
+    // Candidate X2 (2026-09-22) tried XeLL pass-through for media-clock-paced
+    // sources; the audited provider then rejects generation with -15
+    // (LATENCY_REDUCTION_UNSUPPORTED) and Intel's guide states frame
+    // generation is disabled unless XeLL is enabled. Keep low latency on.
+    // VEYRA_TEST_XESS_LOW_LATENCY=0 remains a diagnostic-only toggle.
+    (void)mediaClockPaced;
+    wchar_t lowLatency[4]{};
+    d.xessLowLatencySleep=!(GetEnvironmentVariableW(L"VEYRA_TEST_XESS_LOW_LATENCY",lowLatency,4)&&lowLatency[0]==L'0');lastXessFrame_={};lastXessIdentity_={};xessWasEnabled_=false;lastFsrFrame_={};lastFsrIdentity_={};fsrWasEnabled_=false;
     if(d.xess){
         bufferMonitor_=MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST);
         MONITORINFO monitor{sizeof(monitor)};
@@ -73,7 +81,7 @@ bool VideoPresenter::open(gfx::D3D12DeviceContext& ctx,HWND window,pipeline::Enh
     return true;
 }
 void VideoPresenter::refresh(ID3D12Device* device){for(unsigned i=0;i<3;++i){Microsoft::WRL::ComPtr<ID3D12Resource> bb;if(SUCCEEDED(sink_.swapChain()->GetBuffer(i,IID_PPV_ARGS(&bb))))device->CreateRenderTargetView(bb.Get(),nullptr,{rtvs_->GetCPUDescriptorHandleForHeapStart().ptr+size_t(i)*inc_});}}
-bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& sharedRing,pipeline::EnhanceGraph& graph,unsigned slot,bool generated,bool referencesValid,int comparison,bool baseReference,float split,pipeline::FrameIdentity identity,PreviewView view) {
+bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& sharedRing,pipeline::EnhanceGraph& graph,unsigned slot,bool generated,bool referencesValid,int comparison,bool baseReference,float split,pipeline::FrameIdentity identity,PreviewView view,int64_t sourcePts100ns) {
     auto& ring=presentationQueue_?presentationRing_:sharedRing;
     auto* fence=presentationFence_?presentationFence_.Get():ctx.fence();
     const auto presentStart=std::chrono::steady_clock::now();
@@ -114,7 +122,7 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
     if(auto* xess=sink_.xess()){
         uint32_t preparedId=0;
         for(auto& work:xessWork_)if(work.id&&work.identity==identity){preparedId=work.id;work.id=0;break;}
-        if(!xess->beginFrame(preparedId)){xessFailed_=true;return false;}
+        if(!xess->beginFrame(preparedId,identity)){xessFailed_=true;return false;}
     }
     const auto beginEnd=std::chrono::steady_clock::now();
     if(presentationQueue_){
@@ -170,10 +178,26 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
         // the next continuous frame can interpolate without another warmup.
         const bool enabled=regionVisible&&!generated&&!comparison&&graph.presentMotion(slot)&&graph.presentDepth()&&identity.sourceFrameId!=lastXessIdentity_.sourceFrameId&&!xessGenerationSuppressed_;
         const bool reset=!graph.presentMotionValid(slot)||!xessWasEnabled_||identity.epoch!=lastXessIdentity_.epoch||identity.settingsRevision!=lastXessIdentity_.settingsRevision||graph.motionPreviousSource(slot)!=lastXessIdentity_.sourceFrameId;
-        // Present-to-present time includes provider waits. Feeding it back as
-        // render time can lengthen the next burst. Intel documents zero as the
-        // supported value when an independent frame-time estimate is absent.
-        constexpr float elapsed=0.0f;
+        // frameRenderTime is the provider's only independent period estimate on
+        // non-Intel GPUs. Feeding present-to-present time back would include the
+        // provider's own wait and lengthen the next burst (measured 2026-09-21).
+        // Zero makes it infer the period from observed presents, which under
+        // load fed the owner-thread Present block back into the burst spacing
+        // (8.5 ms in-burst at 4X against a 16.67 ms source, review 2026-09-22).
+        // Supply the real consecutive source PTS delta instead: only with valid
+        // history, an identity that advanced by exactly one, increasing PTS and
+        // a plausible range. Resets, skips and repeats keep zero.
+        // VEYRA_DISABLE_XESS_SOURCE_TIMING restores the old zero for A/B runs.
+        float elapsed=0.0f;
+        static const bool sourceTiming=GetEnvironmentVariableW(L"VEYRA_DISABLE_XESS_SOURCE_TIMING",nullptr,0)==0;
+        // Identity may advance by more than one across a bounded preview
+        // skip (history kept); the interval the provider must bridge is then
+        // the real PTS delta of the two presented sources, not zero.
+        if(sourceTiming&&!reset&&lastXessPts100ns_>=0&&sourcePts100ns>lastXessPts100ns_&&
+           identity.sourceFrameId>lastXessIdentity_.sourceFrameId){
+            const auto delta=double(sourcePts100ns-lastXessPts100ns_)/10000;
+            if(delta>=0.125&&delta<500)elapsed=float(delta);
+        }
         auto* motion=graph.presentMotion(slot);
         auto* depth=graph.presentDepth();
         if(enabled){
@@ -201,7 +225,7 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
             if(!xess->tag(list,bb,mapped,depth,fullBuffer,true,reset,elapsed)){xessFailed_=true;return false;}
             gpuTimer_.mark(list,diagnostics::GpuStage::FgBatch,true);
         }else if(!xess->tag(list,bb,motion,depth,fgRect,false,reset,elapsed)){xessFailed_=true;return false;}
-        lastXessFrame_=now;lastXessIdentity_=identity;xessWasEnabled_=enabled;
+        lastXessFrame_=now;lastXessIdentity_=identity;xessWasEnabled_=enabled;lastXessPts100ns_=sourcePts100ns;
         previousXessView_=view;previousXessWidth_=rc.right;previousXessHeight_=rc.bottom;
     }
     if(auto* fsr=sink_.fsr()){
@@ -229,6 +253,12 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
     const bool slow=ms(presentEnd-presentStart)>=80.0;
     if(slow||presentEnd>=nextCostLog_){
         nextCostLog_=presentEnd+std::chrono::seconds(1);
+        // Display-side sample (F4, review 2026-09-22): which submissions the
+        // display actually scanned out. This is still not a photon measurement.
+        static const bool displayStats=GetEnvironmentVariableW(L"VEYRA_TEST_NO_DISPLAY_STATS",nullptr,0)==0;
+        const auto stats=displayStats?sink_.sampleFrameStatistics():gfx::PresentSink::FrameStatisticsDelta{};
+        if(stats.supported)veyra::log::info("display-stats",std::format("refreshHz={:.3f} presentCalls={} dxgiPresentCount={} refreshes={} presentRefreshDelta={} backend={} (DXGI GetFrameStatistics delta over ~1s. These counters CANNOT tell how many frames the panel actually showed: with vsync off and tearing allowed, dxgiPresentCount tracks completed Present calls, and both refresh counters just advance with the monitor. Measuring scanout needs PresentMon. XeSS/FSR generated presents are provider-internal.)",sink_.displayRefreshHz(),stats.presents,stats.displayed,stats.refreshes,stats.displayedRefresh,sink_.xess()?"XeSS":sink_.fsr()?"FSR":"DXGI"));
+        else if(FAILED(stats.result))veyra::log::info("display-stats",std::format("unavailable hr=0x{:X} backend={}",unsigned(stats.result),sink_.xess()?"XeSS":sink_.fsr()?"FSR":"DXGI"));
         const auto& timing=sink_.lastPresentTiming();
         veyra::log::info("present-cost",std::format("generated={} totalMs={:.3f} recordSubmitMs={:.3f} slotWaitMs={:.3f} dxgiMs={:.3f} slow={} source={} epoch={} backend={} resized={} resizeMs={:.3f} beginMs={:.3f} commandsMs={:.3f} beforeMs={:.3f} presentCallMs={:.3f} bufferMs={:.3f} afterMs={:.3f} hr=0x{:X}",generated,
             std::chrono::duration<double,std::milli>(presentEnd-presentStart).count(),
@@ -255,27 +285,50 @@ void VideoPresenter::close(){
 }
 PresentationSettings VideoPresenter::configurePresentation(gfx::D3D12DeviceContext& ctx,PresentationSettings requested,bool fg,std::wstring& status){
     const bool reflexDisabled=reflex_.disable();reflexFrame_=0;
+    const bool followDisplay=requested.outputRate==OutputRateMode::FollowDisplay;
+    if(followDisplay){
+        const double hz=gfx::PresentSink::displayRefreshFps(sink_.hwnd());
+        if(hz>=1.0&&std::isfinite(hz)){requested.outputRate=OutputRateMode::Custom;requested.customFps=hz;}
+        else requested.outputRate=OutputRateMode::Off;
+    }
     auto effective=requested;
+    std::wstring capNotice;
+    if((xessActive()||fsrActive())&&requested.outputRate!=OutputRateMode::Off){
+        // Provider owns generated Present calls. Capping our real-frame input
+        // would change the source cadence, not cap its final output.
+        effective.outputRate=OutputRateMode::Off;
+        capNotice=L" · 此补帧提供方暂不支持独立输出限帧；已保留设置";
+    }
     if(!reflexDisabled){effective.enabled=false;sink_.configurePacing(false,false);status=L"Reflex 驱动状态撤销失败；应用等待已停用，请关闭视频后重试";return effective;}
-    if(!requested.enabled){const bool restored=sink_.configurePacing(false,false);status=restored?L"帧同步已关闭":L"应用等待已关闭，但显示队列恢复失败；请关闭视频后重试";return effective;}
+    if(!requested.enabled){const bool restored=sink_.configurePacing(false,false);status=restored?L"帧同步已关闭":L"应用等待已关闭，但显示队列恢复失败；请关闭视频后重试";if(effective.outputRate==OutputRateMode::Custom)status+=std::format(L" · 输出上限 {:.3f} FPS",effective.customFps);status+=capNotice;return effective;}
     if(xessActive()||fsrActive()){
+        // The provider owns Present for its generated frames, so neither the
+        // latency waiter nor an output cap can reach them. Only the DXGI VSync
+        // bit still applies (XeSS accepts it on the proxy chain).
         effective.enabled=false;
+        providerOwnedPresentation_=true;
         const bool vsync=xessActive()&&requested.display!=DisplaySync::Tearing;
         sink_.configurePacing(false,vsync);
-        if(fsrActive()){effective.display=DisplaySync::Tearing;status=L"FSR 提供方调度；显示同步暂不支持";}
-        else status=vsync?L"XeSS 提供方调度 · 垂直同步":L"XeSS 提供方调度 · 允许撕裂";
+        if(fsrActive()){effective.display=DisplaySync::Tearing;status=L"FSR 提供方自行调度：低延迟队列与输出上限均不生效，显示同步暂不支持";}
+        else status=vsync?L"XeSS 提供方自行调度：低延迟队列与输出上限不生效 · 垂直同步":L"XeSS 提供方自行调度：低延迟队列与输出上限不生效 · 允许撕裂";
         if(xessActive()&&requested.display==DisplaySync::Automatic)status+=L"（自动；VRR 状态未知）";
         return effective;
     }
+    providerOwnedPresentation_=false;
     if(!sink_.configurePacing(true,requested.display!=DisplaySync::Tearing)){effective.enabled=false;status=L"显示队列控制不可用，已回退原呈现方式";return effective;}
-    if(requested.mode==PacingMode::Reflex){
-        // Generated outputs need separately validated out-of-band markers.
-        if(fg||!reflex_.enable(ctx.device())){effective.mode=PacingMode::LowQueue;status=fg?L"补帧运行：Reflex 暂用低排队（保留补帧倍率）":L"Reflex 初始化失败，已回退低排队";return effective;}
-    }
-    status=effective.mode==PacingMode::Reflex?L"NVIDIA Reflex · 实验":effective.mode==PacingMode::Even?L"均匀呈现":L"低排队";
-    if(requested.display==DisplaySync::Automatic)status+=L" · 自动：垂直同步（VRR 状态未知）";
-    else if(requested.display==DisplaySync::Vsync)status+=L" · 垂直同步";
-    else status+=L" · 允许撕裂";
+    // Low latency = queue depth 1, plus Reflex when frame generation is off
+    // (generated outputs would need separately validated out-of-band markers).
+    std::wstring latency=L"低延迟队列：队列深度 1";
+    if(fg)latency+=L"（补帧运行，Reflex 不启用）";
+    else if(reflex_.enable(ctx.device()))latency=L"低延迟队列：队列深度 1 + NVIDIA Reflex（实验）";
+    else latency+=L"（Reflex 初始化失败）";
+    std::wstring cap;
+    if(followDisplay)cap=std::format(L"输出上限：跟随显示器 {:.0f} Hz",requested.customFps);
+    else if(requested.outputRate==OutputRateMode::Custom)cap=std::format(L"输出上限：{:.3f} FPS",requested.customFps);
+    else cap=L"输出上限：关闭";
+    const std::wstring sync=requested.display==DisplaySync::Automatic?L"显示同步：自动（按垂直同步处理，VRR 状态未知）"
+        :requested.display==DisplaySync::Vsync?L"显示同步：垂直同步":L"显示同步：允许撕裂";
+    status=latency+L" · "+cap+L" · "+sync;
     return effective;
 }
 Microsoft::WRL::ComPtr<ID3D12Resource> VideoPresenter::presentedResourceForTest() {

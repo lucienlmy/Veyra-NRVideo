@@ -77,6 +77,18 @@ int main(){
         check(prefix.canAdmit(10000000,10010000,0,0,true)&&prefix.recovering(),"seed affordability query cannot falsely complete recovery");
     }
     {
+        // Reduced (2X) group: base 8 ms + one measured first interpolation
+        // 3 ms must reach the pair midpoint; the full group (base + 10) need not.
+        veyra::engine::FgRecoveryBudget reduced;
+        reduced.complete(18,true,false,10000000,10);
+        check(!reduced.admitFile(10000000,10100000,10150000,27778,0,0,3,false,0),"full group over budget for the last output");
+        check(reduced.canAdmitReduced(10000000,10150000,83333,0,0,3,0),"midpoint reachable with base plus one interpolation");
+        check(!reduced.canAdmitReduced(10000000,10020000,83333,0,0,3,0),"midpoint too early rejects the reduced group even with one-output grace");
+        check(!reduced.canAdmitReduced(10000000,10150000,83333,0,0,std::nullopt,0),"unmeasured first interpolation cannot admit a reduced group");
+        check(!reduced.canAdmitReduced(10000000,10150000,83333,0,0,3,15),"queued earlier GPU work consumes the reduced deadline");
+        check(!reduced.recovering(),"reduced affordability query does not touch recovery state");
+    }
+    {
         veyra::engine::FgRecoveryBudget queued;
         queued.complete(10,true,false,10000000,4);
         check(queued.admit(10000000,10020000,0,0),"idle GPU can fit the measured batch");
@@ -145,10 +157,10 @@ int main(){
     veyra::engine::LivePairLatency phase;
     check(phase.select(10000000,420000,333333,4)==420000,"unknown live readiness keeps legacy phase");
     for(int i=0;i<8;++i)phase.observe(10000000+i,370000);
-    check(phase.select(10000008,420000,333333,4)==417500,"phase advance is gradual rather than a burst");
+    check(phase.select(10000008,420000,333333,4)==415000,"phase advance is gradual rather than a burst");
     for(int i=0;i<32;++i)phase.select(10000100+i,420000,333333,4);
-    check(phase.select(10000200,420000,333333,4)==380000,"4X keeps measured readiness plus jitter margin");
-    phase.observe(10000201,410000);
+    check(phase.select(10000200,420000,333333,4)==375000,"4X keeps measured readiness plus jitter margin");
+    phase.observe(10000201,415000); // legacy 420000 minus the 0.5 ms margin
     check(phase.select(10000202,420000,333333,4)==420000,"slow batch immediately restores conservative phase");
     check(phase.select(21000000,420000,333333,4)==420000,"stale readiness cannot shorten a new pair");
     for(unsigned multiplier:{2u,4u,6u}){
@@ -158,7 +170,7 @@ int main(){
         for(int i=0;i<8;++i)phase.observe(30000000+i,needed);
         auto last=interval+90000;bool bounded=true;
         for(int i=0;i<80;++i){const auto delay=phase.select(30000100+i,interval+90000,interval,multiplier);
-            bounded&=delay>=needed&&delay<=interval+90000&&last-delay<=2500;last=delay;}
+            bounded&=delay>=needed&&delay<=interval+90000&&last-delay<=5000;last=delay;}
         check(bounded,"2X/4X/6X preserves readiness and bounded phase at 29.97 Hz");
         phase.reset();check(phase.select(30001000,interval+90000,interval,multiplier)==interval+90000,"reset discards earlier readiness");
     }

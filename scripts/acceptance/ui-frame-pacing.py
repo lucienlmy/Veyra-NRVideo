@@ -86,11 +86,12 @@ try:
         if stage=='configure':
             if send(control(240),0xf0):send(control(240),0xf5)
             assert send(control(240),0xf0)==0
-            assert not u.IsWindowEnabled(control(241)) and not u.IsWindowEnabled(control(242))
+            # 240/242/243 are independent now: none of them gates the others.
+            assert u.IsWindowEnabled(control(242)) and u.IsWindowEnabled(control(243))
             send(control(240),0xf5)
-            for ident,value in [(241,1),(242,2)]:
+            for ident,value in [(242,1),(243,0)]:
                 send(control(ident),0x14e,value);send(body,0x111,ident|(1<<16),control(ident))
-            wait(lambda:'effective=true/1/2' in (out/(stage+'.log')).read_text(encoding='utf-8',errors='replace'))
+            wait(lambda:'effective=true/' in (out/(stage+'.log')).read_text(encoding='utf-8',errors='replace'))
             for width,height in [(1280,900),(800,600)]:
                 u.SetWindowPos(main,None,20,20,width,height,0x14)
                 time.sleep(.3)
@@ -101,13 +102,13 @@ try:
                     send(body,0x115,7)  # SB_BOTTOM
                     for unused in range(20):send(body,0x115,1)  # body handles line scroll
                     time.sleep(.3)
-                    boxes=[rect(control(i)) for i in [240,241,242,1150]]
+                    boxes=[rect(control(i)) for i in [240,242,243,1150]]
                     assert all(a[3]<=b[1] for a,b in zip(boxes,boxes[1:])), boxes
                     viewport=rect(body)
                     assert all(viewport[0]<=b[0] and b[2]<=viewport[2] for b in boxes), boxes
                     # Compact drawers scroll; each control must be reachable,
                     # not necessarily visible together in a 140-pixel viewport.
-                    for ident in [240,241,242,1150]:
+                    for ident in [240,242,243,1150]:
                         for unused in range(50):
                             box=rect(control(ident));viewport=rect(body)
                             if viewport[1]<=box[1] and box[3]<=viewport[3]:break
@@ -128,12 +129,13 @@ try:
                     results.append(dict(width=width,height=height,helpExpanded=expanded,boxes=boxes))
                     if expanded:send(control(221),0xf5)
         else:
-            assert send(control(241),0x147)==1 and send(control(242),0x147)==2
+            assert send(control(242),0x147)==1
             assert send(control(240),0xf0)==(1 if stage=='restart-on' else 0), stage
             if stage=='restart-on':
                 send(control(240),0xf5)
                 wait(lambda:'effective=false/' in (out/(stage+'.log')).read_text(encoding='utf-8',errors='replace'))
-                assert not u.IsWindowEnabled(control(241))
+                # The low-latency checkbox no longer disables the other two.
+                assert u.IsWindowEnabled(control(242))
         send(main,0x10)
         assert process.wait(timeout=15)==0
     (out/'result.json').write_text(json.dumps(dict(passed=True,restartOn=True,restartOff=True,layout=results),indent=2),encoding='utf-8')

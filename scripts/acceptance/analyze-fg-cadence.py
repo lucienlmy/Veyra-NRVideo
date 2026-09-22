@@ -143,6 +143,21 @@ def analyze_trace(path):
             "readyObservedBeforePreviousPresent": int(observed["host"]) <= int(a["host"]) if observed else None,
         })
     discarded = [e for e in events if e["event"] == "Discarded"]
+    timed = [p for p in presents if int(p.get("presentBeginHost", 0)) > 0]
+    media = [p for p in timed if p.get("mediaDeviationValid") == "1"]
+    def host_delta(end, start):
+        return distribution([(int(p[end]) - int(p[start])) / 10000 for p in timed
+                             if int(p.get(start, 0)) > 0 and int(p.get(end, 0)) >= int(p[start])])
+    presentation_timing = {
+        "scope": "Each actual app Present once. Signed media deviation; host intervals exclude scanout. Readiness is an upper-bound CPU observation. SDK-generated XeSS frames are not individual app Presents.",
+        "samples": len(timed),
+        "entryDeviationMs": distribution([float(p["entryDeviationMs"]) for p in media]),
+        "returnDeviationMs": distribution([float(p["returnDeviationMs"]) for p in media]),
+        "presentCallMs": host_delta("presentEndHost", "presentBeginHost"),
+        "processToReadyObservedMs": host_delta("readyHost", "processHost"),
+        "readyObservedToPresentEntryMs": host_delta("presentBeginHost", "readyHost"),
+        "decodedToPresentReturnMs": host_delta("presentEndHost", "decodedHost"),
+    }
     observed_delays = [(int(e["host"]) - int(ready[(e["batch"], e["detail"])]["host"])) / 10000
                        for e in discarded if (e["batch"], e["detail"]) in ready]
     discard_summary = {
@@ -165,6 +180,7 @@ def analyze_trace(path):
             "onlyRealRejectedBatches": rejected, "onlyRealWarmupBatches": warmup,
             "batchTransitions": transitions,
             "discardedSubframes": discard_summary,
+            "presentationTiming": presentation_timing,
             "full6GpuCosts": gpu_group_costs(events),
             "presentCpuMs": distribution([float(p["ms"]) for p in presents]),
             "longestGaps": sorted(gaps, key=lambda g: g["intervalMs"], reverse=True)[:12],

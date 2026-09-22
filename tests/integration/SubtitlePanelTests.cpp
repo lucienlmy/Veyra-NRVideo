@@ -8,6 +8,10 @@ int wmain(){
     auto check=[&](bool ok,const char* message){std::cout<<(ok?"PASS ":"FAIL ")<<message<<'\n';failures+=!ok;};
     showSubtitleSettings(owner,{},[&](const auto& settings){current=settings;++updates;});
     const HWND panel=subtitlePanel::window,edit=GetDlgItem(panel,101);SetFocus(edit);
+    check(!current.fitToLines&&!IsWindowEnabled(GetDlgItem(panel,104)),"fixed font is default; fit target disabled");
+    SendDlgItemMessageW(panel,108,BM_CLICK,0,0);
+    check(current.fitToLines&&IsWindowEnabled(GetDlgItem(panel,104)),"fit-to-lines is explicit and enables target");
+    SetFocus(edit); // BM_CLICK intentionally focused the checkbox, as a real click would.
     for(int i=0;i<20;++i){SetWindowTextW(edit,std::to_wstring(20+i).c_str());check(IsWindow(panel)&&GetFocus()==edit&&current.pixels==20+i,"continuous edit retains panel and focus");}
     SetWindowTextW(edit,L"-");check(current.pixels==39,"intermediate invalid text does not apply");
     SendMessageW(panel,WM_COMMAND,MAKEWPARAM(101,EN_KILLFOCUS),LPARAM(edit));

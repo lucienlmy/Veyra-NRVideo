@@ -1,6 +1,8 @@
 #include "veyra/Log.h"
 #include "veyra/diagnostics/Redaction.h"
 #include <sstream>
+#include <optional>
+#include <regex>
 
 #include <windows.h>
 
@@ -98,14 +100,27 @@ void Logger::write(LogLevel level, const char* component, const std::string& mes
     const std::string line = std::format("{} t={} [{}] [{}] {}",
         timestampUtc(), threadId, levelTag(level), component, message);
 
+    // Diagnostic extraction runs before taking the global lock and uses
+    // precompiled expressions: this path is reached from the capture callback
+    // and audio threads, and compiling four regexes under the lock stalled
+    // them during warning bursts (sweep 2026-09-22 C1).
+    std::optional<diagnostics::DiagnosticEvent> pendingEvent;
+    if(level==LogLevel::Warn||level==LogLevel::Error){
+        static const std::regex hrPattern("(?:HRESULT|hr)[=: ]+(0x[0-9a-f]+|[0-9]+)",std::regex::icase|std::regex::optimize);
+        static const std::regex sehPattern("seh[=: ]+(0x[0-9a-f]+|[0-9]+)",std::regex::icase|std::regex::optimize);
+        static const std::regex nvofPattern("(?:status|st)[=: ]+(0x[0-9a-f]+|[0-9]+)",std::regex::icase|std::regex::optimize);
+        static const std::regex ngxPattern("(?:result[=: ]+|failed +)(0x[0-9a-f]+|[0-9]+)",std::regex::icase|std::regex::optimize);
+        auto event=threadDiagnosticContext;event.timestamp=timestampUtc();event.severity=levelTag(level);event.component=component;
+        auto extract=[&](const std::regex& pattern)->std::optional<uint64_t>{std::smatch m;if(std::regex_search(message,m,pattern)){try{return std::stoull(m[1].str(),nullptr,m[1].str().starts_with("0x")?16:10);}catch(...){}}return {};};
+        if(auto c=extract(hrPattern))event.hresult=c;
+        if(auto c=extract(sehPattern))event.seh=c;
+        if(event.component.find("nvof")!=std::string::npos){if(auto c=extract(nvofPattern))event.nvof=c;}
+        if(event.component=="ngx"||message.find("evaluate")!=std::string::npos){if(auto c=extract(ngxPattern))event.ngx=c;}
+        event.stage=event.stage.empty()?"runtime":event.stage;event.message=message;event.fingerprint=event.component+"|"+event.stage+"|"+diagnostics::redact(message);
+        pendingEvent=std::move(event);
+    }
     std::lock_guard<std::mutex> lock(mutex_);
-    if(level==LogLevel::Warn||level==LogLevel::Error){auto event=threadDiagnosticContext;event.timestamp=timestampUtc();event.severity=levelTag(level);event.component=component;
-        auto extract=[&](const char* pattern)->std::optional<uint64_t>{std::smatch m;if(std::regex_search(message,m,std::regex(pattern,std::regex::icase))){try{return std::stoull(m[1].str(),nullptr,m[1].str().starts_with("0x")?16:10);}catch(...){}}return {};};
-        if(auto c=extract("(?:HRESULT|hr)[=: ]+(0x[0-9a-f]+|[0-9]+)"))event.hresult=c;
-        if(auto c=extract("seh[=: ]+(0x[0-9a-f]+|[0-9]+)"))event.seh=c;
-        if(event.component.find("nvof")!=std::string::npos){if(auto c=extract("(?:status|st)[=: ]+(0x[0-9a-f]+|[0-9]+)"))event.nvof=c;}
-        if(event.component=="ngx"||message.find("evaluate")!=std::string::npos){if(auto c=extract("(?:result[=: ]+|failed +)(0x[0-9a-f]+|[0-9]+)"))event.ngx=c;}
-        event.stage=event.stage.empty()?"runtime":event.stage;event.message=message;event.fingerprint=event.component+"|"+event.stage+"|"+diagnostics::redact(message);latestProblem_=event.component+": "+event.message;diagnostics_.add(std::move(event));}
+    if(pendingEvent){latestProblem_=pendingEvent->component+": "+pendingEvent->message;diagnostics_.add(std::move(*pendingEvent));}
     if (consoleEnabled_) {
         std::fprintf(stdout, "%s\n", line.c_str());
         std::fflush(stdout);
@@ -175,7 +190,15 @@ std::string Logger::diagnosticReport(){std::ostringstream o;o<<"Veyra 本地诊�
      <<" Discarded: detail=subframe, count=PreviewFrameReadiness enum, ms=deadline lateness.\n";
     for(const auto& e:trace)o<<"event="<<diagnostics::traceKindName(e.kind)<<" host="<<e.host100ns<<" session="<<e.session
         <<" revision="<<e.identity.settingsRevision<<" epoch="<<e.identity.epoch<<" source="<<e.identity.sourceFrameId
-        <<" batch="<<e.batch<<" fence="<<e.fence<<" pts="<<e.pts100ns<<" detail="<<e.detail<<" count="<<e.count<<" ms="<<e.milliseconds<<'\n';
+        <<" batch="<<e.batch<<" fence="<<e.fence<<" pts="<<e.pts100ns<<" detail="<<e.detail<<" count="<<e.count<<" ms="<<e.milliseconds
+        <<" decodedHost="<<e.decodedHost<<" processHost="<<e.processHost<<" readyHost="<<e.readyHost
+        <<" presentBeginHost="<<e.presentBeginHost<<" presentEndHost="<<e.presentEndHost
+        <<" entryDeviationMs="<<e.entryDeviationMs<<" returnDeviationMs="<<e.returnDeviationMs
+        <<" queueDepth="<<e.queueDepth<<" mediaDeviationValid="<<e.mediaDeviationValid
+        <<" providerInstance="<<e.providerInstance<<" providerCycle="<<e.providerCycle<<" preparationCycle="<<e.preparationCycle
+        <<" providerCallerRva="<<e.providerCallerRva<<" providerScheduleBeginHost="<<e.providerScheduleBeginHost
+        <<" providerFenceSampled="<<e.providerFenceSampled<<" providerFenceBefore="<<e.providerFenceBefore
+        <<" providerFenceAtDeadline="<<e.providerFenceAtDeadline<<" providerFenceTarget="<<e.providerFenceTarget<<'\n';
     return diagnostics::redact(o.str());
 }
 void Logger::flush()

@@ -133,6 +133,10 @@ public:
         if(!p)return E_POINTER;std::lock_guard lock(mutex_);
         *p={compressed_?4:3,compressed_?LONG(512*1024):audio_?audioBlockBytes(*reinterpret_cast<const WAVEFORMATEX*>(desired_.pbFormat)):LONG(layout_.sampleBytes),1,0};return S_OK;
     }
+    // Receive holds the pin mutex across the callback (DirectShow requires
+    // Stop()/GetState() to observe a quiescent pin). The callback itself now
+    // copies outside the source mailbox lock (CaptureCardSource C3), so the
+    // remaining hold covers only validation and pointer publication.
     HRESULT STDMETHODCALLTYPE Receive(IMediaSample* sample)override{
         if(!sample)return E_POINTER;std::lock_guard lock(mutex_);if(flushing_)return S_FALSE;if(state_==State_Stopped)return VFW_E_WRONG_STATE;
         // A device mode change needs full source/graph recreation, never a

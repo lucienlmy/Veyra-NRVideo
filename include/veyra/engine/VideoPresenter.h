@@ -15,9 +15,17 @@ namespace veyra::engine {
 class VideoPresenter {
 public:
     ~VideoPresenter(){close();}
-    bool open(gfx::D3D12DeviceContext&, HWND, pipeline::EnhanceGraph&, bool captureCompatible=false);
-    bool present(gfx::D3D12DeviceContext&,gfx::CommandSlotRing&,pipeline::EnhanceGraph&,unsigned slot,bool generated,bool referencesValid=true,int comparison=0,bool baseReference=false,float split=.5f,pipeline::FrameIdentity identity={},PreviewView view={});
+    // mediaClockPaced: the owner already waits on a media clock before each
+    // source (file playback). Retained for diagnostics; XeLL low latency must
+    // stay enabled or the provider refuses generation (result -15).
+    bool open(gfx::D3D12DeviceContext&, HWND, pipeline::EnhanceGraph&, bool captureCompatible=false, bool mediaClockPaced=false);
+    bool present(gfx::D3D12DeviceContext&,gfx::CommandSlotRing&,pipeline::EnhanceGraph&,unsigned slot,bool generated,bool referencesValid=true,int comparison=0,bool baseReference=false,float split=.5f,pipeline::FrameIdentity identity={},PreviewView view={},int64_t sourcePts100ns=-1);
     void close();
+    // Present-sink providers (XeSS/FSR) block inside Present while pacing
+    // their generated frames. A helper-thread Present was tried on
+    // 2026-09-22 (X3): the provider then estimated its period from the
+    // longer hand-off intervals and the source rate fell 51 -> 24/s at 44%
+    // GPU. The synchronous call stays; see FG_INDEPENDENT_REPAIR_EXECUTION.
     bool beginSourceInput();
     bool beginSourceProcessing();
     void sourceProcessed(pipeline::FrameIdentity);
@@ -25,6 +33,10 @@ public:
     bool presentationReady(){return sink_.presentationReady();}
     uint64_t beginReflex(){return reflex_.begin();}
     void reflexFrame(uint64_t id){reflexFrame_=id;}
+    // True while XeSS/FSR owns Present: the low-latency queue and the output
+    // cap cannot reach provider-generated frames, so the UI greys them out.
+    bool providerOwnedPresentation()const{return providerOwnedPresentation_;}
+
     bool reflexActive()const{return reflex_.active();}
     bool reflexDisablePending()const{return reflex_.disablePending();}
     bool pacingActive()const{return sink_.pacingActive();}
@@ -63,6 +75,7 @@ void recordGpuTimings(){gpuTimer_.recordCompleted();}
 private:
     gfx::ReflexSession reflex_;
     uint64_t reflexFrame_=0,generation_=0;
+    bool providerOwnedPresentation_=false;
     Microsoft::WRL::ComPtr<ID3D12CommandQueue> presentationQueue_;
     Microsoft::WRL::ComPtr<ID3D12Fence> presentationFence_;
     HANDLE presentationEvent_=nullptr;
@@ -85,6 +98,7 @@ private:
     std::chrono::steady_clock::time_point nextCostLog_{};
     std::chrono::steady_clock::time_point lastXessFrame_{};
     pipeline::FrameIdentity lastXessIdentity_{};
+    int64_t lastXessPts100ns_=-1;
     bool xessWasEnabled_=false;
     bool xessFailed_=false;
     bool xessGenerationSuppressed_=false;
