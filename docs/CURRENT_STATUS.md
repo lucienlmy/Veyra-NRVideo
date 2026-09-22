@@ -1,5 +1,16 @@
 # 当前项目状态 / Current Status
 
+## 最新入口：统一修复计划（2026-09-22）
+
+分支 `codex/fg-independent-repair-20260922`（存档 `checkpoint/pre-fg-independent-repair-20260922`）。
+已实施并短测的 FG 修复见 [执行记录](FG_INDEPENDENT_REPAIR_EXECUTION_2026-09-22.md)：
+XeSS 真实源周期提示、有界跳帧保留历史、DLSS 超预算对改 2X 组、显示帧统计；
+X2/X3 已撤回。后续按 [统一修复计划](UNIFIED_REPAIR_PLAN_2026-09-22.md) 分 6 批施工，
+依据为 [全软件清扫](WHOLE_SOFTWARE_SWEEP_2026-09-22.md) 与
+[采集延迟复查](CAPTURE_LATENCY_REVIEW_2026-09-22.md)。运行入口
+`E:/项目/Veyra/tests/fg-independent-repair-20260922/app/veyra.exe`（staging，非便携包）。
+长测、实卡、肉眼验收由用户执行；未合并 main、未推送、未发布。下文为历史状态。
+
 ## 最新结果：有界修复收尾（2026-09-22）
 
 本轮已完成有限范围的实施与验收；下节“只出方案”为历史记录。
