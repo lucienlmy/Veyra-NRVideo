@@ -621,8 +621,10 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                     traceFrame(diagnostics::TraceKind::Ready,batch.batch.identity,batch.batch.batchId,std::max(batch.videoFenceValue,batch.genFenceValue),batch.batch.b100ns,invalid,valid,elapsedMs(watch.processStart));
                     if(watch.real)completedProcessing(batch.batch.identity);
                     // A reduced (2X) group must not lower the full-group FG
-                    // cost estimate; treat it like a warmup sample for costs.
-                    if(batch.batch.identity.settingsRevision==fgBudgetRevision)fgBudget.complete(watch.gpuExecutionMs,batch.fgEvaluated>0,batch.historyReset||batch.fgRecovery||batch.fgReduced,host100ns(),watch.fgExecutionMs);
+                    // cost estimate, but its base cost is a normal sample -
+                    // see FgRecoveryBudget::complete. Only a history reset or
+                    // an FG recovery is a warmup sample.
+                    if(batch.batch.identity.settingsRevision==fgBudgetRevision)fgBudget.complete(watch.gpuExecutionMs,batch.fgEvaluated>0,batch.historyReset||batch.fgRecovery,host100ns(),watch.fgExecutionMs,!batch.fgReduced);
                     if(adaptiveCapturePhase&&watch.captureArrival>0&&valid==batch.fgCandidates&&
                        batch.hasGenerated&&!batch.historyReset&&!batch.fgRecovery&&
                        batch.batch.identity.settingsRevision==fgBudgetRevision&&watch.presentationGeneration==presentationGeneration.load()){
@@ -1185,12 +1187,24 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                         const auto admitted=fgBudget.admitFile(now,firstDeadline,deadline,interval/previewFgMultiplier,elapsed,blit,first,warmingHistory,queuedGpuMs);
                         logAdmission(batch,now,deadline,elapsed,blit,admitted,warmingHistory,"file-audio",firstDeadline,queuedGpuMs);
                         if(admitted)return pipeline::EnhanceGraph::FgDecision::Evaluate;
-                        // Over budget for the full group. Prefer a presentable
-                        // 2X group that keeps history over a whole-group hole
-                        // (16.7 ms gap every rejected pair at 6X, review
-                        // 2026-09-22). The UI reports previewFgMultiplier=2 for
-                        // the pair. VEYRA_TEST_FG_NO_REDUCED restores the old
-                        // reject/seed behaviour for A/B runs.
+                        // Over budget for the full group: emit a presentable 2X
+                        // midpoint instead of a whole-group hole.
+                        // ON by default. Measured 2026-09-22, same slot,
+                        // interleaved, 2 reps (tests/.../b10/gaps-ab-*), 100 Hz
+                        // panel, per DXGI GetFrameStatistics:
+                        //   native 6X   displayed 100.3/s both ways,
+                        //               intervals >16.67 ms  34 -> 0
+                        //   video SR 6X displayed 100.7/s both ways,
+                        //               intervals >16.67 ms 150 -> 90,
+                        //               gpuReadyP95 25.5 -> 22.7 ms
+                        // It submits ~10 fewer frames per second, but every one
+                        // of those was discarded before scanout (notDisplayed
+                        // 192 vs 183), and refreshesWithoutNewFrame is 0 either
+                        // way. Judge this by displayed frames and interval
+                        // evenness, never by submitted frames: at 6X on a
+                        // 100 Hz panel submission oversupplies by ~3x, so a
+                        // submitted-frame count says nothing about what is seen.
+                        // VEYRA_TEST_FG_NO_REDUCED=1 disables it for A/B runs.
                         static const bool reducedGroups=GetEnvironmentVariableW(L"VEYRA_TEST_FG_NO_REDUCED",nullptr,0)==0;
                         if(reducedGroups&&!warmingHistory&&previewFgMultiplier>2){
                             const auto midpoint=now+pipeline::FrameBatch::interpolate(a,batch.b100ns,1,2)-media;

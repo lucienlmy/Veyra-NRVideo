@@ -34,11 +34,19 @@ class FgRecoveryBudget {
 public:
     void reset(){base_.clear();fg_.clear();warmup_.clear();limited_=false;recoveryPairs_=0;}
     void fgCost(double ms,int64_t now){add(fg_,now,ms);}
-    void complete(std::optional<double> measuredMs,bool evaluated,bool warmup,int64_t now,std::optional<double> measuredFg={}){
+    // fgCostComparable=false marks a group whose FG stage did less work than a
+    // full group (a reduced 2X group): its FG time must not lower the
+    // full-group FG estimate. Its BASE cost is still recorded - the base work
+    // is per source frame and does not depend on the multiplier. Excluding the
+    // base cost too starved the model: with ~40% of groups reduced, base_ and
+    // fg_ only ever saw the expensive full groups, the estimate stayed high,
+    // more groups were rejected, and more reductions followed (measured
+    // 2026-09-22: full admissions halved, 550 -> 348, net -10% presented).
+    void complete(std::optional<double> measuredMs,bool evaluated,bool warmup,int64_t now,std::optional<double> measuredFg={},bool fgCostComparable=true){
         // Missing GPU timestamps are unknown, not CPU polling delay. Let old
         // samples expire; admission still checks each batch's real deadline.
         if(warmup){if(evaluated&&measuredMs)add(warmup_,now,*measuredMs);return;}
-        if(evaluated&&measuredFg)fgCost(*measuredFg,now);
+        if(evaluated&&measuredFg&&fgCostComparable)fgCost(*measuredFg,now);
         if(!measuredMs)return;
         const double ms=*measuredMs;
         const auto extra=evaluated?(measuredFg?measuredFg:p95(fg_,now,20000000)):std::optional<double>(0);
