@@ -1226,7 +1226,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                         const auto firstDeadline=now+firstPts-media,deadline=now+lastGenerated-media;
                         const auto first=frameFlow->snapshot(now).gpuTiming[size_t(diagnostics::GpuStage::Fg1)].p95;
                         const auto elapsed=elapsedMs(processStart),blit=livePresentGpu.p95();
-                        const auto admitted=fgBudget.admitFile(now,firstDeadline,deadline,interval/previewFgMultiplier,elapsed,blit,first,warmingHistory,queuedGpuMs);
+                        const auto admitted=fgBudget.admitFile(now,firstDeadline,deadline,interval/previewFgMultiplier,elapsed,blit,first,warmingHistory,queuedGpuMs,options.settings.fgStrictAdmission);
                         logAdmission(batch,now,deadline,elapsed,blit,admitted,warmingHistory,"file-audio",firstDeadline,queuedGpuMs);
                         if(admitted)return pipeline::EnhanceGraph::FgDecision::Evaluate;
                         // Over budget for the full group: emit a presentable 2X

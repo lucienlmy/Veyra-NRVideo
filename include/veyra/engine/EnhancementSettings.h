@@ -107,6 +107,17 @@ struct EnhancementSettings {
     bool lowLatency=false; // preview only: NR before SR, opt-in
     NrRuntime nrRuntime=NrRuntime::Original;
     bool nrTemporal=false; // optional motion-reprojected residual stabilization
+    // Frame-generation admission strictness.
+    //   false (default): a group is admitted when the whole group can still
+    //     reach its LAST deadline, which is what 1.4.0 did. More generated
+    //     frames; some early outputs in a group may arrive late.
+    //   true: the FIRST generated output must also reach its own deadline,
+    //     which at 6X is one sixth of a source interval. Rejects whole groups
+    //     whose early outputs are already doomed, so the cadence is stricter
+    //     but fewer frames are generated - measured 3.75 generated per source
+    //     frame at 6X against 1.4.0 hitting the full 3.0 of 3 at 4X.
+    // Users reported 1.4.0 feeling better, so the looser rule is the default.
+    bool fgStrictAdmission=false;
     bool captureCompatible=false;
     // Capture audio ingress; requires a reconnect to take effect (the media type
     // is negotiated when the graph is built).

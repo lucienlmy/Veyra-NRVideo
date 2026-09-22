@@ -81,8 +81,12 @@ public:
     bool admit(int64_t now,int64_t deadline,double elapsed,double present,bool warmingHistory=false,double queuedMs=0){
         return recordAdmission(canAdmit(now,deadline,elapsed,present,warmingHistory,queuedMs));
     }
+    // strictFirstOutput=false reproduces the 1.4.0 rule: only the whole group
+    // against its last deadline. true additionally requires the first output to
+    // reach its own deadline; see EnhancementSettings::fgStrictAdmission.
     bool admitFile(int64_t now,int64_t firstDeadline,int64_t lastDeadline,int64_t outputInterval,
-                   double elapsed,double present,std::optional<double> firstFgMs,bool warmingHistory,double queuedMs){
+                   double elapsed,double present,std::optional<double> firstFgMs,bool warmingHistory,double queuedMs,
+                   bool strictFirstOutput=true){
         const auto whole=predicted(now,warmingHistory),base=baseCost(now);
         if(warmingHistory||!whole||!base||!firstFgMs||!std::isfinite(*firstFgMs)||*firstFgMs<0)
             return admit(now,lastDeadline,elapsed,present,warmingHistory,queuedMs);
@@ -94,7 +98,7 @@ public:
         };
         // The first output must be reachable too: the last deadline alone can
         // admit a whole MFG group whose early outputs are already doomed.
-        return recordAdmission(fits(firstDeadline,*base+*firstFgMs)&&fits(lastDeadline,*whole));
+        return recordAdmission((!strictFirstOutput||fits(firstDeadline,*base+*firstFgMs))&&fits(lastDeadline,*whole));
     }
     // Reduced-group affordability: base work plus ONE measured first
     // interpolation must reach the pair midpoint. Does not touch recovery

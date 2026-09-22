@@ -225,7 +225,16 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
             if(!xess->tag(list,bb,mapped,depth,fullBuffer,true,reset,elapsed)){xessFailed_=true;return false;}
             gpuTimer_.mark(list,diagnostics::GpuStage::FgBatch,true);
         }else if(!xess->tag(list,bb,motion,depth,fgRect,false,reset,elapsed)){xessFailed_=true;return false;}
-        lastXessFrame_=now;lastXessIdentity_=identity;xessWasEnabled_=enabled;lastXessPts100ns_=sourcePts100ns;
+        // A present that carried no NEW source frame is a repeat, not a
+        // discontinuity: the provider's history is still valid, there is just
+        // nothing new to interpolate from. Clearing the flag on a repeat made
+        // the very next frame set reset=1, so under load the provider re-warmed
+        // at the repeat rate - which is the XeSS flicker users reported
+        // (2026-09-22). Only a real gap invalidates the history.
+        const bool xessRepeatOnly=identity.sourceFrameId==lastXessIdentity_.sourceFrameId;
+        lastXessFrame_=now;xessWasEnabled_=enabled||(xessWasEnabled_&&xessRepeatOnly);
+        if(!xessRepeatOnly)lastXessIdentity_=identity;else lastXessIdentity_.epoch=identity.epoch,lastXessIdentity_.settingsRevision=identity.settingsRevision;
+        if(enabled)lastXessPts100ns_=sourcePts100ns;
         previousXessView_=view;previousXessWidth_=rc.right;previousXessHeight_=rc.bottom;
     }
     if(auto* fsr=sink_.fsr()){
@@ -239,7 +248,10 @@ bool VideoPresenter::present(gfx::D3D12DeviceContext& ctx,gfx::CommandSlotRing& 
         if(!fsr->tag(list,bb,graph.presentMotion(slot),graph.presentDepth(),fgRect,enabled,reset,elapsed))fsrFailed_=true;
         if(enabled)gpuTimer_.mark(list,diagnostics::GpuStage::FgBatch,true);
         if(sink_.fsr()->failed())fsrFailed_=true;
-        lastFsrFrame_=now;lastFsrIdentity_=identity;fsrWasEnabled_=enabled;
+        // Same repeat rule as XeSS above.
+        const bool fsrRepeatOnly=identity.sourceFrameId==lastFsrIdentity_.sourceFrameId;
+        lastFsrFrame_=now;fsrWasEnabled_=enabled||(fsrWasEnabled_&&fsrRepeatOnly);
+        if(!fsrRepeatOnly)lastFsrIdentity_=identity;else lastFsrIdentity_.epoch=identity.epoch,lastFsrIdentity_.settingsRevision=identity.settingsRevision;
     }
     gpuTimer_.mark(list,diagnostics::GpuStage::Blit,true);gpuTimer_.resolve(list);
     if(!ring.submitAndSignal(commandSlot))return false;gpuTimer_.submitted(ring.lastSignaledValue());lastBuffer_=backBufferIndex;hasPresented_=true;
