@@ -131,7 +131,8 @@ ID3D12GraphicsCommandList* CommandSlotRing::acquire(uint32_t slot, Status& statu
         }
     }
 
-    if(target.timed && timingReadback_) {
+    static const bool profileSlots=GetEnvironmentVariableW(L"VEYRA_PROFILE_SLOTS",nullptr,0)>0;
+    if(target.timed && timingReadback_ && (profileSlots||veyra::log::verboseFrameLogs())) {
         uint64_t* data=nullptr;D3D12_RANGE range{slot*2*sizeof(uint64_t),(slot*2+2)*sizeof(uint64_t)};
         if(SUCCEEDED(timingReadback_->Map(0,&range,reinterpret_cast<void**>(&data)))) {
             const uint64_t begin=data[slot*2],end=data[slot*2+1];
@@ -139,6 +140,7 @@ ID3D12GraphicsCommandList* CommandSlotRing::acquire(uint32_t slot, Status& statu
             D3D12_RANGE empty{0,0};timingReadback_->Unmap(0,&empty);
         }target.timed=false;target.label.clear();
     }
+    target.timed=false;
     HRESULT result = target.allocator->Reset();
     if (FAILED(result)) {
         status = Status::DeviceFailure;

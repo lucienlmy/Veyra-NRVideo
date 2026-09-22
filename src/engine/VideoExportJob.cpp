@@ -223,7 +223,7 @@ bool exportVideo(const std::wstring& input,const std::wstring& output,PlayerOpti
             pipeline::EnhanceGraph::FrameOutputs out;if(!graph.process(frame,(pts+videoOriginSeconds)*1000,sourceCount==0||repairPts||pipeline::breaksHistory(packet.flags),out,packet.sequence,&packet.colorInfo,&packet.hardwareSurface,false)){error=true;break;}
             const auto readyStart=std::chrono::steady_clock::now();
             while(!cancel&&!graph.resolveGeneration(out)){
-                if(std::chrono::steady_clock::now()-readyStart>std::chrono::seconds(2)){error=true;break;}
+                if(std::chrono::steady_clock::now()-readyStart>std::chrono::seconds(2)){error=true;failureReason=L"GPU 在 2 秒内未完成一帧增强（可能显卡繁忙或驱动异常）";veyra::log::error("export","frame GPU completion timed out after 2s");break;}
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
             if(error||cancel)break;

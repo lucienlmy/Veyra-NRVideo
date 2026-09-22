@@ -25,7 +25,11 @@ struct NvencD3D12Encoder::Impl {
     PacketWriter writer;std::vector<uint8_t> sequence;
     struct Slot {ComPtr<ID3D12Resource> input,output;NV_ENC_REGISTERED_PTR registeredIn=nullptr,registeredOut=nullptr;NV_ENC_INPUT_PTR mappedIn=nullptr,mappedOut=nullptr;NV_ENC_INPUT_RESOURCE_D3D12 in{};NV_ENC_OUTPUT_RESOURCE_D3D12 out{};uint64_t value=0;bool pending=false;};
     std::array<Slot,4> slots;
-    bool check(NVENCSTATUS code,const char* op){const char* detail=code!=NV_ENC_SUCCESS&&encoder&&api.nvEncGetLastErrorString?api.nvEncGetLastErrorString(encoder):"";if(!detail)detail="";veyra::log::info("nvenc",std::format("{} status={} detail={}",op,int(code),detail));if(code!=NV_ENC_SUCCESS){const auto text=std::format("{} status={} {}",op,int(code),detail);error.assign(text.begin(),text.end());}return code==NV_ENC_SUCCESS;}
+    unsigned successLogs=0;
+    bool check(NVENCSTATUS code,const char* op){const char* detail=code!=NV_ENC_SUCCESS&&encoder&&api.nvEncGetLastErrorString?api.nvEncGetLastErrorString(encoder):"";if(!detail)detail="";
+        // Success is logged for the first calls only; per-frame encode/lock/unlock
+        // at 4X 60 fps produced 720 lines/s (sweep 2026-09-22 E1). Failures always log.
+        if(code!=NV_ENC_SUCCESS||successLogs<24||veyra::log::verboseFrameLogs()){if(code==NV_ENC_SUCCESS)++successLogs;veyra::log::info("nvenc",std::format("{} status={} detail={}",op,int(code),detail));}if(code!=NV_ENC_SUCCESS){const auto text=std::format("{} status={} {}",op,int(code),detail);error.assign(text.begin(),text.end());}return code==NV_ENC_SUCCESS;}
     bool drain(Slot& s){
         if(!s.pending)return true;
         if(fence->GetCompletedValue()<s.value){if(FAILED(fence->SetEventOnCompletion(s.value,event))||WaitForSingleObject(event,10000)!=WAIT_OBJECT_0)return false;}

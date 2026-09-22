@@ -272,10 +272,14 @@ void loadColourFoldState(){
     colorFoldMask=preferences.colourFoldMask;
 }
 void saveColourFoldState(){
+    // One load+save per click is unavoidable while the store is a whole-file
+    // document; skip the write when the mask did not change.
+    static uint32_t lastSavedMask=UINT32_MAX;
+    if(lastSavedMask==colorFoldMask)return;
     veyra::ui::UiPreferenceStore store_(runtime::localDataDirectory());
     auto preferences=store_.load();
     preferences.colourFoldMask=colorFoldMask;
-    if(!store_.save(preferences,nullptr))veyra::log::warn("color-ui","fold state not saved");
+    if(!store_.save(preferences,nullptr))veyra::log::warn("color-ui","fold state not saved");else lastSavedMask=colorFoldMask;
 }
 void layoutColorPage(int bodyWidthDip){
     auto place=[&](int id,int y,int height,bool hidden,int x=-1,int w=-2){
@@ -891,7 +895,7 @@ bool colourFieldEdited(int index,float value){
     syncColorControls();
     return true;
 }
-void message(const std::wstring& text){if(statusSink)statusSink(text);else putText(401,text.c_str());}
+void message(const std::wstring& text){static std::wstring last;if(text==last)return;last=text;if(statusSink)statusSink(text);else putText(401,text.c_str());}
 bool submit(engine::EnhancementSettings s){if(!apply(s)){dirty=true;message(L"修改未接受，请查看状态栏或日志；若总增强正在切换，请稍后重试。");return false;}dirty=false;return true;}
 void syncProtection(const engine::ProtectionSettings& protection){
     const bool wasPopulating=populating;populating=true;
@@ -1214,7 +1218,7 @@ void arrange(){
     auto batch=BeginDeferWindowPos(int(items.size()));
     for(auto& entry:items){bool fixed=entry.page==-1,visible=!entry.hidden&&(entry.page==page||fixed)&&(GetDlgCtrlID(entry.h)!=1120||smoothMotionHelpExpanded);int w=entry.w<0?width-entry.x-12:entry.w;int y=fixed?(GetDlgCtrlID(entry.h)==400?0:(GetDlgCtrlID(entry.h)==211||GetDlgCtrlID(entry.h)==219)?86:42):entry.y+helpOffset(entry)-scroll;
         if(fixed){SetWindowPos(entry.h,nullptr,dip(window,entry.x),dip(window,y),dip(window,std::max(1,w)),dip(window,42),SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOREDRAW);continue;}batch=DeferWindowPos(batch,entry.h,nullptr,dip(window,entry.x),dip(window,y),dip(window,std::max(1,w)),dip(window,entry.height),SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOREDRAW|SWP_NOCOPYBITS|(visible?SWP_SHOWWINDOW:SWP_HIDEWINDOW));}
-    EndDeferWindowPos(batch);RedrawWindow(body,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_UPDATENOW);InvalidateRect(window,nullptr,FALSE);
+    EndDeferWindowPos(batch);RedrawWindow(body,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN);InvalidateRect(window,nullptr,FALSE);
 }
 
 HWND add(const wchar_t* cls,const wchar_t* text,int id,DWORD style,int group,int x,int y,int width,int height){auto h=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|style,0,0,1,1,group==-1?window:body,reinterpret_cast<HMENU>(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(h,WM_SETFONT,WPARAM(font),TRUE);themeControl(h);if(group!=-1)SetWindowSubclass(h,scrollOnly,950,0);items.push_back({h,group,x,y,width,height});return h;}

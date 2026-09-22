@@ -157,10 +157,10 @@ int main(){
     veyra::engine::LivePairLatency phase;
     check(phase.select(10000000,420000,333333,4)==420000,"unknown live readiness keeps legacy phase");
     for(int i=0;i<8;++i)phase.observe(10000000+i,370000);
-    check(phase.select(10000008,420000,333333,4)==417500,"phase advance is gradual rather than a burst");
+    check(phase.select(10000008,420000,333333,4)==415000,"phase advance is gradual rather than a burst");
     for(int i=0;i<32;++i)phase.select(10000100+i,420000,333333,4);
-    check(phase.select(10000200,420000,333333,4)==380000,"4X keeps measured readiness plus jitter margin");
-    phase.observe(10000201,410000);
+    check(phase.select(10000200,420000,333333,4)==375000,"4X keeps measured readiness plus jitter margin");
+    phase.observe(10000201,415000); // legacy 420000 minus the 0.5 ms margin
     check(phase.select(10000202,420000,333333,4)==420000,"slow batch immediately restores conservative phase");
     check(phase.select(21000000,420000,333333,4)==420000,"stale readiness cannot shorten a new pair");
     for(unsigned multiplier:{2u,4u,6u}){
@@ -170,7 +170,7 @@ int main(){
         for(int i=0;i<8;++i)phase.observe(30000000+i,needed);
         auto last=interval+90000;bool bounded=true;
         for(int i=0;i<80;++i){const auto delay=phase.select(30000100+i,interval+90000,interval,multiplier);
-            bounded&=delay>=needed&&delay<=interval+90000&&last-delay<=2500;last=delay;}
+            bounded&=delay>=needed&&delay<=interval+90000&&last-delay<=5000;last=delay;}
         check(bounded,"2X/4X/6X preserves readiness and bounded phase at 29.97 Hz");
         phase.reset();check(phase.select(30001000,interval+90000,interval,multiplier)==interval+90000,"reset discards earlier readiness");
     }

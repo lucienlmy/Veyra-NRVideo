@@ -45,6 +45,7 @@ private:
     uint64_t sequence_ = 0;
     uint64_t epoch_ = 1;
     uint64_t framesRead_ = 0;
+    uint64_t ptsFallbacks_ = 0; // frames delivered with best_effort/dts timestamps
     uint64_t seekCount_ = 0;
     bool pendingSeekFlag_ = false;
     bool draining_ = false;

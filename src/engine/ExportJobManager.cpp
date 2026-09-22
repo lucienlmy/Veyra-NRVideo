@@ -37,7 +37,10 @@ struct ExportJobManager::Impl {
     ~Impl(){clear();}
 };
 ExportJobManager::ExportJobManager():p_(std::make_unique<Impl>()){}
-ExportJobManager::~ExportJobManager(){cancel();if(p_->process)WaitForSingleObject(p_->process,5000);p_->clear();}
+// Shutdown is bounded: the job object is KILL_ON_CLOSE, so a worker still
+// draining NVENC is terminated by clear() after a short grace instead of
+// stalling process exit for up to five seconds.
+ExportJobManager::~ExportJobManager(){cancel();if(p_->process)WaitForSingleObject(p_->process,1000);p_->clear();}
 bool ExportJobManager::start(const std::wstring& input,const std::wstring& output,EnhancementSettings settings,bool hevc,unsigned maxFrames,int audioStreamIndex){
     if(poll().active())return false;p_->clear();p_->snapshot={};
     auto fail=[&](const wchar_t* message){const DWORD error=GetLastError();p_->clear();p_->snapshot.state=ExportState::Failed;p_->snapshot.message=message;log::error("export-worker",std::format("launch failed error={}",error));return false;};

@@ -339,6 +339,37 @@ bool AudioRenderer::copyPcm(BYTE* destination,const float* input,size_t frames){
     std::memcpy(destination,mixed_.data(),frames*outputFormat_.channels*sizeof(float));return true;
 }
 
+struct AudioRenderer::EndpointNotifier : IMMNotificationClient {
+    std::atomic<HRESULT>* error;std::atomic<unsigned long> refs{1};
+    explicit EndpointNotifier(std::atomic<HRESULT>* target):error(target){}
+    ULONG STDMETHODCALLTYPE AddRef()override{return ULONG(++refs);}
+    ULONG STDMETHODCALLTYPE Release()override{const ULONG n=ULONG(--refs);if(!n)delete this;return n;}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** pp)override{if(!pp)return E_POINTER;if(id==__uuidof(IUnknown)||id==__uuidof(IMMNotificationClient)){*pp=this;AddRef();return S_OK;}*pp=nullptr;return E_NOINTERFACE;}
+    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR,DWORD)override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR)override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR)override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR,const PROPERTYKEY)override{return S_OK;}
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow,ERole role,LPCWSTR)override{
+        if(flow==eRender&&role==eConsole){
+            // Same code the write path reports when the device disappears; the
+            // pipeline thread treats it as a recoverable endpoint loss.
+            error->store(AUDCLNT_E_DEVICE_INVALIDATED);
+            log::info("audio","default render endpoint changed; scheduling endpoint rebuild");
+        }
+        return S_OK;
+    }
+};
+void AudioRenderer::registerEndpointNotification(){
+    if(!enum_||notifier_)return;
+    notifier_=new EndpointNotifier(&lastError_);
+    const HRESULT hr=enum_->RegisterEndpointNotificationCallback(notifier_);
+    if(FAILED(hr)){log::warn("audio",std::format("RegisterEndpointNotificationCallback hr=0x{:08X}; device changes recover on the next write error",unsigned(hr)));notifier_->Release();notifier_=nullptr;}
+}
+void AudioRenderer::unregisterEndpointNotification(){
+    if(!notifier_)return;
+    if(enum_)enum_->UnregisterEndpointNotificationCallback(notifier_);
+    notifier_->Release();notifier_=nullptr;
+}
 bool AudioRenderer::start(AudioFormat input,double requestedBufferMs)
 {
     std::lock_guard endpointLock(endpointMutex_);
@@ -357,6 +388,7 @@ bool AudioRenderer::start(AudioFormat input,double requestedBufferMs)
     if (!checked(hr,"Create MMDeviceEnumerator")) return false;
     hr = enum_->GetDefaultAudioEndpoint(eRender, eConsole, &device_);
     if (!checked(hr,"GetDefaultAudioEndpoint")) return false;
+    registerEndpointNotification();
     hr = device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
         reinterpret_cast<void**>(&client_));
     if (!checked(hr,"Activate AudioClient")) return false;
@@ -590,6 +622,7 @@ void AudioRenderer::shutdown()
     std::lock_guard endpointLock(endpointMutex_);
     if (client_) { (void)client_->Stop(); (void)client_->Reset(); }
     #define REL(x) if (x) { x->Release(); x = nullptr; }
+    unregisterEndpointNotification();
     REL(clock_); REL(render_); REL(client_); REL(device_); REL(enum_);
     swr_free(&channelMix_);
     #undef REL

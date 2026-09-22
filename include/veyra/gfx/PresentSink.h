@@ -27,6 +27,10 @@ using ComPtr = Microsoft::WRL::ComPtr<T>;
 class PresentSink {
 public:
     static bool hdrDisplayActive(HWND);
+    // The factory is cached process-wide; DXGI factories detect display
+    // topology changes (IsCurrent) so a stale one is recreated on demand.
+    // Creating a factory and enumerating every adapter/output each call ran
+    // on the graph owner every 2 s under HDR (sweep 2026-09-22 A1).
     static std::optional<bool> queryHdrDisplayActive(HWND,HMONITOR* queriedMonitor=nullptr);
     static double displayRefreshFps(HWND);
     PresentSink() = default;

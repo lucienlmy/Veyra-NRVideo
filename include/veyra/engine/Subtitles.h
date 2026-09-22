@@ -88,7 +88,7 @@ std::wstring textAt(const SubtitleTrack&,double seconds);
 // Constant-offset alignment: correlates the file's speech activity with the
 // track's cue activity. Returns the shift to ADD to cue timestamps.
 struct SubtitleAlignResult { bool ok=false; int offsetMs=0; double score=0; std::wstring detail; };
-SubtitleAlignResult alignSubtitleToAudio(const std::wstring& mediaPath,const SubtitleTrack&,int maxShiftSeconds=30);
+SubtitleAlignResult alignSubtitleToAudio(const std::wstring& mediaPath,const SubtitleTrack&,int maxShiftSeconds=30,std::stop_token stop={});
 
 // Legacy helpers kept for the existing call sites/tests.
 std::vector<SubtitleCue> loadSrt(const std::wstring& path);

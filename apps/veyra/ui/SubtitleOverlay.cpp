@@ -68,11 +68,20 @@ void updateSubtitleOverlay(HWND h,const std::vector<SubtitleLine>& lines,const S
     const auto signature=signatureOf(lines,view,rect)+std::format(L"/dpi{}",GetDpiForWindow(h));
     if(lastSignature==signature){ShowWindow(h,SW_SHOWNOACTIVATE);return;}
     const int width=rect.right,height=rect.bottom;
-    BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=width;info.bmiHeader.biHeight=-height;
-    info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
+    // The DIB is reused while the overlay size is unchanged; zoom/drag only
+    // re-renders into it (a 4K DIB is ~33 MB, re-allocating it per tick stalled
+    // middle-button drags).
+    static thread_local HBITMAP cachedBitmap=nullptr;static thread_local void* cachedBits=nullptr;static thread_local int cachedW=0,cachedH=0;
     HDC screen=GetDC(nullptr),memory=CreateCompatibleDC(screen);
-    void* bits=nullptr;auto bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0);
-    if(!bitmap||!bits){if(bitmap)DeleteObject(bitmap);DeleteDC(memory);ReleaseDC(nullptr,screen);return;}
+    if(!cachedBitmap||cachedW!=width||cachedH!=height){
+        if(cachedBitmap){DeleteObject(cachedBitmap);cachedBitmap=nullptr;cachedBits=nullptr;}
+        BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=width;info.bmiHeader.biHeight=-height;
+        info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
+        cachedBitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&cachedBits,nullptr,0);
+        if(!cachedBitmap||!cachedBits){if(cachedBitmap)DeleteObject(cachedBitmap);cachedBitmap=nullptr;cachedBits=nullptr;DeleteDC(memory);ReleaseDC(nullptr,screen);return;}
+        cachedW=width;cachedH=height;
+    }
+    auto bitmap=cachedBitmap;void* bits=cachedBits;
     auto previousObject=SelectObject(memory,bitmap);
     memset(bits,0,size_t(width)*height*4);
     {
@@ -232,6 +241,6 @@ void updateSubtitleOverlay(HWND h,const std::vector<SubtitleLine>& lines,const S
             SetPropW(h,L"subtitle.error",HANDLE(1));
         }
     }
-    SelectObject(memory,previousObject);DeleteObject(bitmap);DeleteDC(memory);ReleaseDC(nullptr,screen);
+    SelectObject(memory,previousObject);DeleteDC(memory);ReleaseDC(nullptr,screen);
 }
 } // namespace veyra::ui

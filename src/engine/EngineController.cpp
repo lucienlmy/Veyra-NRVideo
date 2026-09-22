@@ -34,6 +34,7 @@
 #include "veyra/gfx/D3D12DeviceContext.h"
 #include "veyra/gfx/CommandSlotRing.h"
 #include "veyra/RuntimePaths.h"
+#include <avrt.h>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -139,10 +140,21 @@ void EngineController::requestPresentation(PresentationSettings settings){
     presentation_=settings;++presentationRevision_;
 }
 PlayerSnapshot EngineController::snapshot()const{
-    std::lock_guard lock(mutex_);auto copy=snapshot_;copy.volume=volume_;copy.muted=muted_;
-    copy.presentation=presentation_;
+    // The flow window has its own mutex and percentile work; take it after
+    // releasing the engine mutex so UI polling does not hold the owner thread
+    // (sweep 2026-09-22 B3). Consecutive UI callers within 50 ms share one
+    // flow snapshot.
+    PlayerSnapshot copy;std::shared_ptr<FrameFlowWindow> flowWindow;
+    {std::lock_guard lock(mutex_);copy=snapshot_;copy.presentation=presentation_;flowWindow=activeFlow_;}
+    copy.volume=volume_;copy.muted=muted_;
     const bool playing=copy.running&&!copy.image&&copy.transport==TransportState::Playing;
-    if(activeFlow_)copy.metrics.flow=activeFlow_->snapshot(monotonic100ns());
+    if(flowWindow){
+        static std::mutex cacheMutex;static diagnostics::FrameFlowMetrics cached;static const FrameFlowWindow* cachedFor=nullptr;static int64_t cachedAt=0;
+        const auto now=monotonic100ns();
+        std::lock_guard lock(cacheMutex);
+        if(cachedFor!=flowWindow.get()||now-cachedAt>500000){cached=flowWindow->snapshot(now);cachedFor=flowWindow.get();cachedAt=now;}
+        copy.metrics.flow=cached;
+    }
     copy.fgBudgetLimited=playing&&copy.metrics.flow.lastFgRejected100ns>0&&monotonic100ns()-copy.metrics.flow.lastFgRejected100ns<10000000;
 #ifdef VEYRA_ENABLE_REMOTEPLAY
     if(copy.remotePlay&&activeRemote_){
@@ -159,8 +171,20 @@ PlayerSnapshot EngineController::snapshot()const{
     return copy;
 }
 void EngineController::status(const std::wstring& s,bool failed){std::lock_guard lock(mutex_);snapshot_.status=s;snapshot_.failed=failed;if(failed)snapshot_.transport=TransportState::Failed;}
+namespace {
+// MMCSS registration keeps the graph owner and capture callback threads ahead
+// of ordinary UI/background work; failure is logged once and ignored.
+struct MmcssScope {
+    HANDLE handle=nullptr;
+    explicit MmcssScope(const wchar_t* task){DWORD index=0;handle=AvSetMmThreadCharacteristicsW(task,&index);
+        static std::atomic<bool> reported{false};
+        if(!handle&&!reported.exchange(true))veyra::log::warn("scheduler",std::format("MMCSS unavailable error={} (continuing at normal priority)",GetLastError()));}
+    ~MmcssScope(){if(handle)AvRevertMmThreadCharacteristics(handle);}
+};
+}
 void EngineController::run(HWND window,std::wstring path,PlayerOptions options,std::shared_ptr<source::RemotePlayConnectDesc> remoteRequest){
     CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+    MmcssScope mmcss(L"Pro Audio");
     status(L"正在初始化GPU与本地运行时…");
     gfx::D3D12DeviceContext ctx;gfx::CommandSlotRing ring;source::MediaFileSource source;
     sink::AudioPipeline audioPipe;sink::AudioRenderer audio;VideoPresenter presenter;
@@ -917,7 +941,10 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                     const bool referencesValid=hasOutput&&out.batch.count&&out.batch.frames[out.batch.count-1].lease&&out.batch.frames[out.batch.count-1].lease->referencesValid;
                     if(hasOutput&&!presenter.present(ctx,ring,graph,out.videoSlot,false,referencesValid,comparisonMode_,comparisonBase_,comparisonSplit_,out.batch.identity,previewView())){if(recoverXessPresentation())continue;status(L"画面呈现失败",true);break;}
                     if(hasOutput&&graph.resolveGeneration(out))completeReset(out.batch.identity);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(16));continue;
+                    // Paused: the swapchain already holds the frame; re-present
+                    // (present() handles resize and takes the view each call)
+                    // at 50 ms instead of 16 ms unless a parameter refresh is due.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(refreshPausedFrame_?1:50));continue;
                 }
                 if(wasPaused&&!paused_){holdFileAudio();audioRebuffering=false;if(audioStarted)audioPipe.setPaused(false);anchor=Clock::now();anchorMs=out.ptsMs;reset=true;pendingResetCause=pipeline::ResetReason::PauseResume;wasPaused=false;}
                 // Backpressure before reading the capacity-one source mailbox:

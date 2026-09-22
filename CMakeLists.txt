@@ -894,7 +894,7 @@ if(VEYRA_FFMPEG_ROOT AND EXISTS "${VEYRA_FFMPEG_ROOT}/include/libavformat/avform
   endif()
   target_compile_features(veyra PRIVATE cxx_std_20)
   target_compile_options(veyra PRIVATE /utf-8)
-  target_link_libraries(veyra PRIVATE veyra_engine comctl32 comdlg32 shell32)
+  target_link_libraries(veyra PRIVATE veyra_engine comctl32 comdlg32 shell32 dbghelp)
   add_dependencies(veyra veyra_shader_present_blit)
 
   # matrix executes through the shared product libraries only.

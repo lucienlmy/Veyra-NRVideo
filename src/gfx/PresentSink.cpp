@@ -7,6 +7,7 @@
 #include <format>
 #include <chrono>
 #include <vector>
+#include <mutex>
 
 #include "veyra/Log.h"
 #include "veyra/diagnostics/CpuStallTrace.h"
@@ -28,9 +29,18 @@ std::optional<bool> PresentSink::queryHdrDisplayActive(HWND window,HMONITOR* que
     const auto monitor=MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST);
     if(queriedMonitor)*queriedMonitor=monitor;
     if(!monitor)return std::nullopt;
+    static ComPtr<IDXGIFactory1> cachedFactory;static std::mutex factoryMutex;
     ComPtr<IDXGIFactory1> factory;
-    auto hr=CreateDXGIFactory1(IID_PPV_ARGS(&factory));
-    if(FAILED(hr)){log::warn("display-color",std::format("CreateDXGIFactory1 query failed hr=0x{:X}",unsigned(hr)));return std::nullopt;}
+    {
+        std::lock_guard lock(factoryMutex);
+        if(cachedFactory&&!cachedFactory->IsCurrent())cachedFactory.Reset();
+        if(!cachedFactory){
+            const auto hr=CreateDXGIFactory1(IID_PPV_ARGS(&cachedFactory));
+            if(FAILED(hr)){log::warn("display-color",std::format("CreateDXGIFactory1 query failed hr=0x{:X}",unsigned(hr)));cachedFactory.Reset();return std::nullopt;}
+        }
+        factory=cachedFactory;
+    }
+    HRESULT hr=S_OK;
     for(UINT a=0;;++a){
         ComPtr<IDXGIAdapter1> adapter;hr=factory->EnumAdapters1(a,&adapter);
         if(hr==DXGI_ERROR_NOT_FOUND)break;

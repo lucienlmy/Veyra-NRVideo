@@ -7,6 +7,7 @@
 #include "veyra/source/CaptureCardSource.h"
 #include "veyra/source/CaptureFormatRank.h"
 #include <future>
+#include <thread>
 #include <format>
 namespace veyra::ui {
 namespace {
@@ -177,7 +178,11 @@ case WM_SIZE:arrange();return 0;
 case WM_DPICHANGED:{auto r=reinterpret_cast<RECT*>(lp);SetWindowPos(h,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE);auto old=font;font=makeFont(h);EnumChildWindows(h,[](HWND c,LPARAM f)->BOOL{SendMessageW(c,WM_SETFONT,WPARAM(f),TRUE);return TRUE;},LPARAM(font));DeleteObject(old);arrange();return 0;}
 case WM_KEYDOWN:if(wp==VK_ESCAPE){DestroyWindow(h);return 0;}break;
 case WM_CLOSE:DestroyWindow(h);return 0;
-case WM_DESTROY:KillTimer(h,1);DeleteObject(font);window=nullptr;return 0;
+case WM_DESTROY:KillTimer(h,1);DeleteObject(font);window=nullptr;
+    // Do not block window destruction on a device enumeration still running:
+    // park the future so its destructor waits on a detached helper instead.
+    if(pending.valid()&&pending.wait_for(std::chrono::seconds(0))!=std::future_status::ready){std::thread([f=std::move(pending)]()mutable{try{(void)f.get();}catch(...){}}).detach();}
+    return 0;
 }return DefWindowProcW(h,msg,wp,lp);}
 }
 void showCapturePanel(HWND parent,std::function<void(const std::wstring&)> callback,std::function<bool()> read,std::function<bool(bool)> write,std::function<int()> readIngress,std::function<bool(int)> writeIngress,std::function<bool()> readFlipped,std::function<bool(bool)> writeFlipped,std::function<int()> readBuffered,std::function<bool(int)> writeBuffered){start=std::move(callback);readSdr=std::move(read);setSdr=std::move(write);readAudioIngress=std::move(readIngress);setAudioIngress=std::move(writeIngress);readFlip=std::move(readFlipped);setFlip=std::move(writeFlipped);readBuffer=std::move(readBuffered);setBuffer=std::move(writeBuffered);if(window){SetForegroundWindow(window);return;}WNDCLASSW wc{};wc.lpfnWndProc=proc;wc.hInstance=GetModuleHandleW(nullptr);wc.lpszClassName=L"VeyraCaptureSetup";wc.hbrBackground=panelBrush();wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassW(&wc);CreateWindowExW(WS_EX_TOOLWINDOW,wc.lpszClassName,L"采集卡 · 连接设置",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_VISIBLE,CW_USEDEFAULT,CW_USEDEFAULT,dip(parent,560),dip(parent,680),parent,nullptr,wc.hInstance,nullptr);}

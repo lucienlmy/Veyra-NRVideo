@@ -2011,6 +2011,10 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
     }
     failedBackend_=engine::FailedBackend::None;
     if(runFg)fgHistorySkipped_=false;
+    // uploadFences_ doubles as the DLSS presentation-queue handoff fence for
+    // the real frame (presentationReadyFence): it must cover the FG lists that
+    // transition videoFrame_[parity] back to COMMON. Recording it before FG
+    // (sweep A2, tried 2026-09-22) raised cross-queue barrier errors.
     uploadFences_[parity]=ring_.lastSignaledValue();
 
     prevPtsMs_ = ptsMs;
@@ -2035,12 +2039,12 @@ bool EnhanceGraph::resolveFrame(FrameOutputs& out,uint32_t index)
     auto& frame=out.batch.frames[index];
     if(!frame.lease||!frame.lease->ready())return false;
     if(frame.kind!=FrameKind::Generated||frame.validity!=GenerationValidity::Pending)return true;
-    void* data=nullptr;D3D12_RANGE range{0,4};
-    HRESULT hr=fgDisableReadback_[frame.lease->slot]->Map(0,&range,&data);
-    if(FAILED(hr)){frame.validity=GenerationValidity::Failed;veyra::log::error("fg-status",std::format("Map hr=0x{:X}",unsigned(hr)));return true;}
-    const bool disabled=*static_cast<uint8_t*>(data)!=0;
+    // Readback heaps may stay mapped; the 4-byte status is read directly.
+    auto& mapped=fgDisableMapped_[frame.lease->slot];
+    if(!mapped){D3D12_RANGE range{0,4};void* data=nullptr;const HRESULT hr=fgDisableReadback_[frame.lease->slot]->Map(0,&range,&data);
+        if(FAILED(hr)){frame.validity=GenerationValidity::Failed;veyra::log::error("fg-status",std::format("Map hr=0x{:X}",unsigned(hr)));return true;}mapped=static_cast<const volatile uint8_t*>(data);}
+    const bool disabled=*mapped!=0;
     const bool rejected=disabled||out.contentDuplicate;
-    D3D12_RANGE written{0,0};fgDisableReadback_[frame.lease->slot]->Unmap(0,&written);
     frame.validity=rejected?GenerationValidity::Disabled:GenerationValidity::Valid;
     if(rejected)++metrics_.fgDisabledFrames;else ++metrics_.fgGeneratedFrames;
     if(veyra::log::verboseFrameLogs())veyra::log::info("fg-status",std::format("batch={} frame={} epoch={} revision={} subframe={} fence={} disable={} valid={}",out.batch.batchId,out.realFrameIndex,out.batch.identity.epoch,out.batch.identity.settingsRevision,frame.subframe,frame.lease->readyFence,disabled,!rejected));
@@ -2202,7 +2206,7 @@ void EnhanceGraph::shutdown()
     for(unsigned i=0;i<2;++i){if(upRgb_[i]&&mappedRgb_[i])upRgb_[i]->Unmap(0,nullptr);mappedRgb_[i]=nullptr;upRgb_[i].Reset();}
     downsamplePass_={};residualPass_={};flowAdaptPass_={};
     nrTemporal_.close();nrInput_.Reset();residualRgba_.Reset();nrFlow_.Reset();baseFlow_.Reset();
-    for(unsigned i=0;i<kGeneratedPoolSlots;++i){fgDisable_[i].Reset();fgDisableReadback_[i].Reset();generatedLeases_[i].reset();genFrame_[i].Reset();}for(auto& lease:realLeases_)lease.reset();fgDisableInit_.Reset();
+    for(unsigned i=0;i<kGeneratedPoolSlots;++i){if(fgDisableMapped_[i]&&fgDisableReadback_[i]){D3D12_RANGE written{0,0};fgDisableReadback_[i]->Unmap(0,&written);}fgDisableMapped_[i]=nullptr;fgDisable_[i].Reset();fgDisableReadback_[i].Reset();generatedLeases_[i].reset();genFrame_[i].Reset();}for(auto& lease:realLeases_)lease.reset();fgDisableInit_.Reset();
     encPass_ = ComputePass{};
     blitPass_ = ComputePass{};hdrVideoSrPass_={};
     yuvPass_ = ComputePass{};

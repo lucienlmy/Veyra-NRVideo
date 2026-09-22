@@ -25,7 +25,21 @@ struct CaptureAudioSession::Impl : AudioPcmSource {
     std::condition_variable wake;
     std::deque<Chunk> input;
     size_t inputBytes=0,convertingBytes=0;
-    std::deque<float> pcm;
+    // PCM queue: contiguous storage with a head cursor instead of a deque.
+    // pull() used to copy and pop_front one sample at a time under the mutex
+    // (8ch/48k: ~3840 deque operations per 10 ms) while the capture thread
+    // waited on the same lock (sweep 2026-09-22 C5).
+    struct PcmQueue {
+        std::vector<float> data;size_t head=0;
+        size_t size()const{return data.size()-head;}
+        bool empty()const{return size()==0;}
+        void clear(){data.clear();head=0;}
+        const float* begin()const{return data.data()+head;}
+        float operator[](size_t i)const{return data[head+i];}
+        void append(const float* first,const float* last){compact();data.insert(data.end(),first,last);}
+        void popFront(size_t n){head=std::min(data.size(),head+n);if(head==data.size())clear();}
+        void compact(){if(head>=65536&&head*2>=data.size()){data.erase(data.begin(),data.begin()+ptrdiff_t(head));head=0;}}
+    } pcm;
     double headPts=0;
     AudioFrameTimeline pcmTimeline;
     uint64_t pcmHead=0,pcmTail=0;
@@ -48,7 +62,7 @@ struct CaptureAudioSession::Impl : AudioPcmSource {
     void clearPcmLocked(){pcm.clear();haveHead=false;pcmTimeline.clear();pcmHead=pcmTail=0;pullEnd.reset();}
     void clearPcm(){std::lock_guard lock(mutex);clearPcmLocked();queueChanged();}
     void discardPcm(size_t frames){
-        for(size_t i=0;i<frames*layout.channels;++i)pcm.pop_front();pcmHead+=frames;
+        pcm.popFront(frames*layout.channels);pcmHead+=frames;
         headPts=pcmTimeline.at(double(pcmHead)).value_or(headPts);
         pcmTimeline.discardBefore(pcmHead);queueChanged();
     }
@@ -57,7 +71,7 @@ struct CaptureAudioSession::Impl : AudioPcmSource {
         std::lock_guard lock(mutex);
         const size_t take=std::min(frames,pcm.size()/layout.channels);
         *pts=haveHead?headPts:-1;
-        for(size_t i=0;i<take*layout.channels;++i)dst[i]=pcm[i];
+        if(take)std::memcpy(dst,pcm.begin(),take*layout.channels*sizeof(float));
         recording.pulled(dst,take*layout.channels);
         discardPcm(take);pullEnd=take?std::optional<double>(headPts):std::nullopt;
         return take;
@@ -236,7 +250,7 @@ struct CaptureAudioSession::Impl : AudioPcmSource {
                     }else{
                         if(!haveHead){headPts=start;haveHead=true;}
                         pcmTimeline.append(pcmTail,count,start,end);pcmTail+=count;
-                        pcm.insert(pcm.end(),converted.begin(),converted.begin()+size_t(count)*layout.channels);
+                        pcm.append(converted.data(),converted.data()+size_t(count)*layout.channels);
                     }
                     queueChanged();
                 }

@@ -18,9 +18,9 @@ struct SeekPreview {
         if(release&&target!=submitted){engine.seek(target);submitted=target;}
         else tick();
     }
-    void tick() {
+    void tick(const veyra::engine::PlayerSnapshot* shared=nullptr) {
         if(!active)return;
-        const auto s=engine.snapshot();
+        const auto s=shared?*shared:engine.snapshot();
         if(s.sessionId!=session||!s.running||s.failed){*this={};return;}
         if(s.seekRequested!=s.seekPresented)return;
         if(target!=submitted){engine.seek(target);submitted=target;return;}
