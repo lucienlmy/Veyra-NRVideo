@@ -29,6 +29,8 @@ struct PlayerOptions { bool nr=false,sr=false,fg=false,realtime=true; uint32_t f
 enum class TransportState { Empty, Opening, Playing, Paused, Ended, Stopping, Failed };
 struct PlayerSnapshot {
     PresentationSettings presentation, presentationEffective;
+    // XeSS/FSR owns Present; the UI greys the pacing controls when true.
+    bool presentationProviderOwned=false;
     uint64_t presentationRevision=0;
     std::wstring presentationStatus;
     TransportState transport=TransportState::Empty;

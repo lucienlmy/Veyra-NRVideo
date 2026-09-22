@@ -1491,14 +1491,15 @@ case WM_CREATE:{window=h;font=makeFont(h);items.clear();displayedBackendWarning.
         }
     }
     setText(item(1103),L"光流与补帧");
-    add(L"BUTTON",L"帧节奏 / 显示同步",240,BS_AUTOCHECKBOX|WS_TABSTOP,1,12,550,-1,32);
-    combo(241,1,590,{L"低排队",L"均匀呈现 · 前端同步",L"NVIDIA Reflex · 实验"});
-    combo(242,1,634,{L"显示：允许撕裂",L"显示：垂直同步",L"显示：自动"});
-    combo(243,1,678,{L"输出限帧：关闭",L"输出限帧：跟随显示器",L"输出限帧：自定义"});
-    add(L"EDIT",L"60",244,ES_AUTOHSCROLL|ES_RIGHT|WS_TABSTOP,1,182,722,90,28);
-    add(L"STATIC",L"FPS",1147,0,1,276,722,40,28);
-    add(L"STATIC",L"",1150,SS_NOPREFIX,1,12,764,-1,90);
-    {const auto p=controller->snapshot().presentation;check(240,p.enabled?BST_CHECKED:BST_UNCHECKED);send(241,CB_SETCURSEL,unsigned(p.mode));send(242,CB_SETCURSEL,unsigned(p.display));send(243,CB_SETCURSEL,unsigned(p.outputRate));putText(244,std::format(L"{:.3f}",p.customFps).c_str());EnableWindow(item(241),p.enabled);EnableWindow(item(242),p.enabled);EnableWindow(item(243),true);EnableWindow(item(244),p.outputRate==engine::OutputRateMode::Custom);}
+    // Three independent controls. The old mode selector (low queue / even /
+    // Reflex) was removed: all three measured identical (2026-09-22).
+    add(L"BUTTON",L"低延迟队列（减少排队；本机无法验收）",240,BS_AUTOCHECKBOX|WS_TABSTOP,1,12,550,-1,32);
+    combo(242,1,590,{L"显示同步：允许撕裂",L"显示同步：垂直同步",L"显示同步：自动"});
+    combo(243,1,634,{L"输出上限：关闭",L"输出上限：跟随显示器",L"输出上限：自定义"});
+    add(L"EDIT",L"60",244,ES_AUTOHSCROLL|ES_RIGHT|WS_TABSTOP,1,182,678,90,28);
+    add(L"STATIC",L"FPS",1147,0,1,276,678,40,28);
+    add(L"STATIC",L"",1150,SS_NOPREFIX,1,12,720,-1,134);
+    {const auto p=controller->snapshot().presentation;check(240,p.enabled?BST_CHECKED:BST_UNCHECKED);send(242,CB_SETCURSEL,unsigned(p.display));send(243,CB_SETCURSEL,unsigned(p.outputRate));putText(244,std::format(L"{:.3f}",p.customFps).c_str());EnableWindow(item(241),p.enabled);EnableWindow(item(242),p.enabled);EnableWindow(item(243),true);EnableWindow(item(244),p.outputRate==engine::OutputRateMode::Custom);}
     button(L"Smooth Motion · 开启方法 ▾",221,1,12,358);
     ghost(item(221));
     SetPropW(item(221),L"veyra.tip",HANDLE(L"查看 NVIDIA App 的 AI 插帧开启方法。这里只提供说明，不修改驱动，也不限制叠加补帧。"));
@@ -1601,12 +1602,12 @@ __declspec(noinline) LRESULT settingsCommand(HWND h,UINT msg,WPARAM wp,LPARAM lp
         }
         return 0;
     }
-    if(msg==WM_COMMAND&&!populating&&((LOWORD(wp)==240&&HIWORD(wp)==BN_CLICKED)||((LOWORD(wp)==241||LOWORD(wp)==242||LOWORD(wp)==243)&&HIWORD(wp)==CBN_SELCHANGE)|| (LOWORD(wp)==244&&HIWORD(wp)==EN_KILLFOCUS))){
+    if(msg==WM_COMMAND&&!populating&&((LOWORD(wp)==240&&HIWORD(wp)==BN_CLICKED)||((LOWORD(wp)==242||LOWORD(wp)==243)&&HIWORD(wp)==CBN_SELCHANGE)|| (LOWORD(wp)==244&&HIWORD(wp)==EN_KILLFOCUS))){
         auto setting=controller->snapshot().presentation;setting.enabled=checked(240)==BST_CHECKED;
-        setting.mode=engine::PacingMode(send(241,CB_GETCURSEL));setting.display=engine::DisplaySync(send(242,CB_GETCURSEL));
+        setting.display=engine::DisplaySync(send(242,CB_GETCURSEL));
         setting.outputRate=static_cast<engine::OutputRateMode>(send(243,CB_GETCURSEL));
         if(setting.outputRate==engine::OutputRateMode::Custom){wchar_t fps[64]{};GetWindowTextW(item(244),fps,64);wchar_t* end=nullptr;const auto value=wcstod(fps,&end);if(end==fps||*end||!std::isfinite(value)||value<1||value>1000){message(L"自定义限帧须为 1–1000 FPS");return 0;}setting.customFps=value;}
-        if(setting.valid()){controller->requestPresentation(setting);EnableWindow(item(241),setting.enabled);EnableWindow(item(242),setting.enabled);EnableWindow(item(244),setting.outputRate==engine::OutputRateMode::Custom);SendMessageW(GetParent(window),WM_APP+46,0,0);}return 0;
+        if(setting.valid()){controller->requestPresentation(setting);EnableWindow(item(244),setting.outputRate==engine::OutputRateMode::Custom);SendMessageW(GetParent(window),WM_APP+46,0,0);}return 0;
     }
     if(msg==WM_COMMAND&&LOWORD(wp)==221&&HIWORD(wp)==BN_CLICKED){smoothMotionHelpExpanded=!smoothMotionHelpExpanded;putText(221,smoothMotionHelpExpanded?L"Smooth Motion · 收起说明 ▴":L"Smooth Motion · 开启方法 ▾");arrange();return 0;}
     if(msg==WM_COMMAND&&!populating&&(LOWORD(wp)==220||LOWORD(wp)==223)&&HIWORD(wp)==BN_CLICKED){liveField(LOWORD(wp));return 0;}
@@ -1810,7 +1811,13 @@ case WM_COMMAND:{const int id=LOWORD(wp);if(!populating&&((id>=202&&id<=205||id=
 
 __declspec(noinline) LRESULT settingsTimer(HWND h,UINT msg,WPARAM wp,LPARAM lp){
 switch(msg){
-case WM_TIMER:{auto s=controller->snapshot();putText(1150,s.presentationStatus.c_str());syncProtection(enhancementEnabled?s.desired.protection:configuredSettings.protection);if(enhancementEnabled&&!dirty&&displayedSettings!=s.desired)populate(s.desired);syncColorControls();check(200,enhancementEnabled&&s.desired.nr?BST_CHECKED:BST_UNCHECKED);check(201,enhancementEnabled&&s.desired.sr?BST_CHECKED:BST_UNCHECKED);std::wostringstream o;if(!s.running&&!s.frames&&s.transport!=engine::TransportState::Opening)o<<L"未打开媒体 · 设置待启用\n";else{
+case WM_TIMER:{auto s=controller->snapshot();putText(1150,s.presentationStatus.c_str());
+    // XeSS/FSR owns Present, so grey out what cannot reach its frames. The
+    // flag comes from the engine, never from parsing the status text.
+    {const bool owned=s.presentationProviderOwned;
+     for(int id:{240,243})EnableWindow(item(id),!owned);
+     EnableWindow(item(244),!owned&&s.presentation.outputRate==engine::OutputRateMode::Custom);}
+syncProtection(enhancementEnabled?s.desired.protection:configuredSettings.protection);if(enhancementEnabled&&!dirty&&displayedSettings!=s.desired)populate(s.desired);syncColorControls();check(200,enhancementEnabled&&s.desired.nr?BST_CHECKED:BST_UNCHECKED);check(201,enhancementEnabled&&s.desired.sr?BST_CHECKED:BST_UNCHECKED);std::wostringstream o;if(!s.running&&!s.frames&&s.transport!=engine::TransportState::Opening)o<<L"未打开媒体 · 设置待启用\n";else{
     o<<L"期望版本 "<<s.desired.revision<<L" / 已应用 "<<s.applied.revision<<(s.applying?L" · 应用中":L"");
     const wchar_t* backend=s.applied.frameGenerationBackend==engine::FrameGenerationBackend::XeSS?L"XeSS":s.applied.frameGenerationBackend==engine::FrameGenerationBackend::Fsr?L"AMD FSR":L"DLSS";
     o<<L"\n"<<backend<<L" · "<<(s.applied.multiplier<=1?L"补帧关闭":s.fgActive?L"补帧运行":L"等待有效补帧");

@@ -651,8 +651,9 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 PresentationSettings requested;uint64_t revision;
                 {std::lock_guard lock(mutex_);requested=presentation_;revision=presentationRevision_;}
                 if(revision==pacingRevision&&presenterGeneration==presenter.generation()){
-                    if(presentationEffective.enabled&&presentationEffective.mode==PacingMode::Reflex&&!presenter.reflexActive()){
-                        presentationEffective.mode=PacingMode::LowQueue;
+                    // Reflex dropped out at runtime: the queue-depth part of the
+                    // low-latency setting stays, so only the status line changes.
+                    if(presentationEffective.enabled&&!presenter.reflexActive()&&presenter.reflexDisablePending()){
                         std::lock_guard lock(mutex_);snapshot_.presentationEffective=presentationEffective;snapshot_.presentationStatus=presenter.reflexDisablePending()?L"Reflex 调用及驱动撤销失败；请关闭视频后重试":L"Reflex 调用失败，当前使用低排队；详见日志";
                     }
                     if(presentationEffective.enabled&&!presenter.pacingActive()){
@@ -668,7 +669,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 std::wstring message;
                 presentationEffective=presenter.configurePresentation(ctx,requested,options.fg,message);
                 pacingRevision=revision;presenterGeneration=presenter.generation();cadence.reset();
-                {std::lock_guard lock(mutex_);snapshot_.presentationEffective=presentationEffective;snapshot_.presentationRevision=revision;snapshot_.presentationStatus=message;}
+                {std::lock_guard lock(mutex_);snapshot_.presentationEffective=presentationEffective;snapshot_.presentationRevision=revision;snapshot_.presentationStatus=message;snapshot_.presentationProviderOwned=presenter.providerOwnedPresentation();}
                 veyra::log::info("pacing",std::format("revision={} requested={}/{}/{} effective={}/{}/{}",revision,requested.enabled,unsigned(requested.mode),unsigned(requested.display),presentationEffective.enabled,unsigned(presentationEffective.mode),unsigned(presentationEffective.display)));
             };
             auto drainLivePresentation=[&]{cadence.reset();if(liveScheduler){++presentationDrains;liveScheduler->cancel();pollCompletions();pendingCompletions.clear();}pairLatency.reset();};
@@ -1126,6 +1127,23 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 };
                 if(fgBudgetRevision!=options.settings.revision){fgBudget.reset();pairLatency.reset();fgBudgetRevision=options.settings.revision;}
                 previewFgMultiplier=options.fgMultiplier;
+                // An output cap used to only drop candidates at present time, so
+                // the GPU still generated frames that were thrown away: at 6X on
+                // a 100 Hz panel we generated ~360/s, submitted ~276/s, and the
+                // panel could show at most 100 (measured 2026-09-22). Derive the
+                // smallest multiplier whose output still reaches the cap and use
+                // that instead. Only ever lowers, never raises, the multiplier the
+                // user asked for; the present-time cap below stays as the residual
+                // after this integer rounding.
+                if(options.fg&&previewFgMultiplier>2&&presentationEffective.outputRate==OutputRateMode::Custom&&
+                   !presentSinkFrameGeneration(options.settings.frameGenerationBackend)){
+                    const double sourceFps=activeSource->info().averageFps;
+                    const double cap=presentationEffective.customFps;
+                    if(sourceFps>0.01&&std::isfinite(cap)&&cap>0.0){
+                        const auto needed=unsigned(std::ceil(cap/sourceFps-1e-6));
+                        previewFgMultiplier=std::clamp(needed,2u,options.fgMultiplier);
+                    }
+                }
                 {std::lock_guard lock(mutex_);snapshot_.previewFgMultiplier=previewFgMultiplier;}
                 const auto liveInterval=livePhaseInterval100ns(pkt.duration,activeSource->info().averageFps/(isScreen&&halfRate?2:1),isScreen);
                 const auto processingAllowance=isCapture&&options.fg&&!presentSinkFrameGeneration(options.settings.frameGenerationBackend)?
@@ -1417,12 +1435,15 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                                 const auto due=cadence.due(optionalNow+int64_t((itemPtsMs-nowMs())*10000),interval,20);
                                 if(optionalNow<due)return {State::Pending,due};
                             }
+                            int64_t capInterval=0;
                             if(presentationEffective.enabled||presentationEffective.outputRate==OutputRateMode::Custom){
                                 const auto interval=std::max<int64_t>(1,int64_t(sourceIntervalMs*10000)/std::max(1u,batch.batch.count));
                                 const auto mediaDeadline=isCapture?timeline.cadenceDeadline(item.pts100ns,optionalNow):fileAwaitingVideo?optionalNow:optionalNow+int64_t((itemPtsMs-nowMs())*10000);
-                                const unsigned catchUpPercent=!isCapture&&options.fg&&!presentSinkFrameGeneration(options.settings.frameGenerationBackend)?20:10;
-                                auto due=presentationEffective.enabled&&presentationEffective.mode==PacingMode::Even?cadence.due(mediaDeadline,interval,catchUpPercent):mediaDeadline;
-                                int64_t capInterval=0;
+                                // Media time is the deadline. The old "even" mode
+                                // added a spacing floor on top; it measured as a
+                                // no-op because production already lands within
+                                // 0.8 ms of media time (b13/pacing-ab).
+                                auto due=mediaDeadline;
                                 if(presentationEffective.outputRate==OutputRateMode::Custom){
                                     capInterval=std::max<int64_t>(1,int64_t(10000000.0/presentationEffective.customFps));
                                     due=std::max(due,cadence.rateDue(optionalNow,capInterval));
@@ -1433,7 +1454,6 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                                 // slot, discard this stale display opportunity
                                 // instead of accumulating latency.
                                 if(capInterval>0&&cadence.rateSkipsCandidate(optionalNow,mediaDeadline,interval,capInterval)){++s.dropped;++s.handled;++s.next;s.deadlineStart.reset();continue;}
-                                if(generated&&presentationEffective.enabled&&presentationEffective.mode==PacingMode::Even&&due>mediaDeadline+interval){++s.dropped;++s.handled;++s.next;s.deadlineStart.reset();continue;}
                                 if(optionalNow<due)return {State::Pending,due};
                                 if(!presenter.presentationReady())return {State::Pending,optionalNow+2000};
                             }
@@ -1457,6 +1477,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                             }
                             if(didPresent){
                                 cadence.submitted(optionalNow);
+                                cadence.rateSubmitted(optionalNow,capInterval);
                                 if(physicalCapture&&veyra::log::verboseFrameLogs())veyra::log::info("capture-present-sample",std::format("source={} epoch={} revision={} batch={} subframe={} generated={} arrival={} arrivalA={} ready={} begin={} end={}",item.identity.sourceFrameId,item.identity.epoch,item.identity.settingsRevision,batch.batch.batchId,item.subframe,generated,captureArrival,lineage?lineage->a.host100ns:0,watch->frameReadyObserved[s.next],optionalNow,host100ns()));
                                 if(veyra::log::verboseFrameLogs())veyra::log::info("pacing-sample",std::format("mode={} enabled={} sync={} pts={} begin={} end={} ready={} process={} generated={} queue={} lateMs={:.3f}",unsigned(presentationEffective.mode),presentationEffective.enabled,unsigned(presentationEffective.display),item.pts100ns,optionalNow,host100ns(),watch->frameReadyObserved[s.next],std::chrono::duration_cast<std::chrono::nanoseconds>(watch->processStart.time_since_epoch()).count()/100,generated,liveScheduler->occupancy(),isCapture?double(optionalNow-timeline.deadline(item.pts100ns))/10000:fileAwaitingVideo?0:nowMs()-itemPtsMs));
                                 diagnostics::FrameTraceEvent event{presentEndHost,runSessionId,item.identity,batch.batch.batchId,item.lease->consumerFence,item.pts100ns,diagnostics::TraceKind::Present,item.subframe,1,elapsed};

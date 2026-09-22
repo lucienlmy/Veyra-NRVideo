@@ -33,6 +33,10 @@ public:
     bool presentationReady(){return sink_.presentationReady();}
     uint64_t beginReflex(){return reflex_.begin();}
     void reflexFrame(uint64_t id){reflexFrame_=id;}
+    // True while XeSS/FSR owns Present: the low-latency queue and the output
+    // cap cannot reach provider-generated frames, so the UI greys them out.
+    bool providerOwnedPresentation()const{return providerOwnedPresentation_;}
+
     bool reflexActive()const{return reflex_.active();}
     bool reflexDisablePending()const{return reflex_.disablePending();}
     bool pacingActive()const{return sink_.pacingActive();}
@@ -71,6 +75,7 @@ void recordGpuTimings(){gpuTimer_.recordCompleted();}
 private:
     gfx::ReflexSession reflex_;
     uint64_t reflexFrame_=0,generation_=0;
+    bool providerOwnedPresentation_=false;
     Microsoft::WRL::ComPtr<ID3D12CommandQueue> presentationQueue_;
     Microsoft::WRL::ComPtr<ID3D12Fence> presentationFence_;
     HANDLE presentationEvent_=nullptr;
