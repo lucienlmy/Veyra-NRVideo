@@ -5,7 +5,7 @@
 计划见 [统一修复计划](UNIFIED_REPAIR_PLAN_2026-09-22.md)。本机 RTX 5070、100 Hz
 显示器；所有数字为 30 s 短测或单元/合同测试，长测、实卡、多显示器、HDR 屏、肉眼画质
 由用户验收。运行入口 `E:/项目/Veyra/tests/fg-independent-repair-20260922/app/veyra.exe`
-（SHA256 前 16 位 `011D744561B3F870`，staging，运行库为 junction，非便携包）。
+（第 7 批后 SHA256 前 16 位 `703B9D073AD28197`，staging，运行库为 junction，非便携包）。
 产物：`E:/项目/Veyra/tests/fg-independent-repair-20260922/{b12,b3456}/`，构建日志
 `E:/项目/Veyra/logs/fg-independent-repair-20260922/build-b*.log`。
 
@@ -112,6 +112,28 @@
 从 11.5 ms 降到 0.73 ms 是本轮最大的意外收益，最可能来自 MMCSS 让提供方节奏线程与
 owner 不再互相抢占；DLSS 6X 提交率 237→270 与 SR 6X 116→140 同理。这些是单次 30 s
 短测，用户长测确认前不计入。
+
+## 3b. 第 7 批（补做未完成项，提交 `6d019dc`，标签 `checkpoint/plan-b7-done-20260922`）
+
+| 编号 | 状态 | 备注 |
+| --- | --- | --- |
+| C3 | 已修 | 原生采集回调第三帧 staging：锁内认领、锁外复制、锁内指针交换发布；`tryRead` 不再被复制阻塞 |
+| 延迟 2 | 已修 | 采集源暴露自动重置事件；owner `waitLive` 改 `WaitForMultipleObjects{事件,定时器}` |
+| B5 | 已修 | 中途硬解失败：重开软解、`seekToUs` 回上次 PTS、置 Seek 标志与新 epoch |
+| C7 | 已修 | 采样率/采样格式变化重建 resampler；仅声道布局变化才停流 |
+| A4/A5 | 已修 | 每帧诊断上下文复用成员，字符串仅变化时更新；亮度采样与直方图缓冲复用 |
+| E6 | 已修 | 命令槽 GPU 时长记录满 16384 后环形覆盖 |
+| C9 | 已修 | 硬解路径 EAGAIN 缓冲上限 8（原 16），避免占满解码池 |
+| C8 | 注释 | Receive 锁范围说明 |
+| C4、延迟 3b、E5、B1 | 未做 | 压缩 payload 池、直写 upload 堆、每秒日志合并、step lambda 收敛 |
+
+门槛：scheduler 127、修复合同 205、采集音频 18、FG 呈现 D3D12 errors=0、backend-switch 16、
+文件 NR+DLSS2 10 s smoke 463 帧 0 错误；实卡 MCS 4K--T800 4K30 rate test PASS（callback
+29.97）；25 s 采集 NR+DLSS4X 新/旧 exe 对照：`callbackToPresentReturnP95` 42.7 vs 42.5 ms，
+`gpuReadyP95` 10.6 vs 10.6，dropped 0/0，expired 2/2。**C3 与事件唤醒在本工况没有可测收益**：
+FG 下延迟由相位等待主导，且复制本就与 GPU 工作重叠；收益（若有）要在无 FG 或 1440p60
+工况用 `test-capture-version-comparison.ps1` 120 s 测，由用户执行。注意 `capture-callback`
+日志的 `entryToLockMs` 现在包含锁外复制时间，与旧版数值不可直接比较。
 
 ## 4. 未做项的原因与下一步
 

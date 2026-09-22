@@ -1,5 +1,14 @@
 # Veyra 工作记录
 
+## 2026-09-22 统一修复第 7 批（补做）
+
+存档 `checkpoint/plan-b7-pre-20260922`，提交 `6d019dc`，标签 `checkpoint/plan-b7-done-20260922`。
+补做：采集回调锁外复制（第三帧 staging）、owner 按采集事件唤醒、中途硬解回退软解并回位、
+音频采样率/格式变化重建 resampler、每帧诊断与直方图缓冲复用、GPU 时长环形、硬解 EAGAIN
+上限 8。门槛全过；实卡 4K30 NR+DLSS4X 25 s 新旧 exe 对照延迟持平（42.7 vs 42.5 ms P95），
+FG 工况下相位等待主导，采集侧收益需无 FG/1440p60 长测。仍未做：压缩 payload 池、直写
+upload 堆、每秒日志合并、step lambda 收敛。运行入口 exe SHA256 前 16 位 `703B9D073AD28197`。
+
 ## 2026-09-22 统一修复计划第 1–6 批实施与短测
 
 提交 `e11aa56`，标签 `checkpoint/plan-b6-done-20260922`。已修 30 项、撤回 2 项（A2 upload
