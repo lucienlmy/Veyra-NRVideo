@@ -1,5 +1,18 @@
 # Veyra 工作记录
 
+## 2026-09-22 全软件清扫排查（只读，出整改方案）
+
+在 `codex/fg-independent-repair-20260922` 上对引擎/管线/gfx、输入源/解码/音频、UI、
+日志/导出做只读审计，新发现 45 条并逐条给出 file:line、触发条件、判定与最小修复，
+按 6 批整改排序，每批有回归门槛与撤回条件。见
+[清扫排查与整改方案](WHOLE_SOFTWARE_SWEEP_2026-09-22.md)。
+P1 要点：HDR 工况 owner 每 2 s 重建 DXGI factory 枚举输出；graph 入口 CPU 等待两帧前含 FG
+的 fence；日志 warn/error 在全局锁内每次编译 4 个正则且被采集回调线程调用；≤1080p 软解
+单线程；缺 pts 帧直接停播；隐藏的 statusBar 吞掉字幕快捷键/失败原因反馈；底栏
+ColourStatus 与 MediaTitle 重叠；专业模式 <772px 截图与参数按钮重叠；总增强开关忽略
+拒绝；字幕自动对齐线程无法取消导致关窗挂起；弹窗嵌套循环分发主窗定时器。
+未改产品代码、未构建、未运行新测试；台账已有未解决项不重复。
+
 ## 2026-09-22 DLSS/XeSS 补帧独立修复（隔离分支，短测）
 
 分支 `codex/fg-independent-repair-20260922`，存档 `checkpoint/pre-fg-independent-repair-20260922`。
