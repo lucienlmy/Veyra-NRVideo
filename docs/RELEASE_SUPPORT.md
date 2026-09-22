@@ -5,6 +5,8 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/Likely7/Veyra-NRVideo/v1.4.0/docs/images/1.4.0/donate-wechat.jpg" alt="微信赞助" width="220">
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="https://raw.githubusercontent.com/Likely7/Veyra-NRVideo/v1.4.2/docs/images/1.4.2/community-group.png" alt="Veyra 交流群 / bug 反馈 / beta 版本" width="220">
+  <img src="https://raw.githubusercontent.com/Likely7/Veyra-NRVideo/v1.4.4/docs/images/1.4.4/community-group.png" alt="Veyra 交流群 / bug 反馈 / beta 版本" width="220">
 </p>
 <p align="center"><small>左：微信赞助　右：Veyra 交流群（bug 反馈与 beta 版本发布）</small></p>
+
+> 交流群二维码 7 天内（2026-09-29 前）有效，过期后需要重新进入更新。赞助码保持不变。

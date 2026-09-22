@@ -1,4 +1,4 @@
-# Veyra 1.4.4beta Runtime Components
+# Veyra 1.4.4 Runtime Components
 
 All runtime identities are unchanged from 1.4.3. No SDK or model is added.
 Per-file origins, hashes, versions, sizes and signatures are recorded in the
