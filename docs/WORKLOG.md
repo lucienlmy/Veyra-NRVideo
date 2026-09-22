@@ -1,5 +1,37 @@
 # Veyra 工作记录
 
+## 2026-09-22 DLSS/XeSS 补帧独立复核（只出方案）
+
+独立于此前结论重读源码、六组 XeSS 4X 对照日志/trace 与有界修复 DLSS 矩阵。
+结论与方案见 [独立复核与修复方案](FG_INDEPENDENT_REVIEW_2026-09-22.md)，
+逐帧重解析结果在 `E:/项目/Veyra/tests/fg-independent-review-20260922/trace-analysis.json`。
+要点：XeSS 真超分+NR+4X 的源帧倒退来自 owner 线程在提供方 Present 内阻塞
+（连续帧 p50 约 27ms）与 frameRenderTime=0 的节奏正反馈，GPU 72% 是 CPU 串行化；
+预览跳帧触发 NR/XeSS/DLSS 全历史重置（当前运行 25% 呈现原帧为重置帧）是欠速闪烁的
+首要待验证假设；DLSS 6X+NR 每对 GPU 成本 19–24ms 超预算属性能上限，失败形态为
+整组空档。旧版靠 suppress 门保持源率，不是修复。未改产品代码、未构建、未运行新测试。
+
+## 2026-09-22 下载的 1.4.0 XeSS 4X 对照
+
+按用户请求测试 `E:/App/Veyra-1.4.0-win64-portable/Veyra.exe`，并同期重跑
+1.4.3/current。同一视频、两种负载，各30秒，串行运行。最终六组均exit0，
+failed=false。先发现旧版专业小窗口的交换链只有770x494，新版保持2560x1440，
+因此补做真实fullscreen对照，统一到2560x1440；一次目录名含fullscreen但命令
+仍是pro的误测明确排除，保留原始证据。完整条件、命令、哈希、统计区间及限制见
+[1.4.0对照记录](XESS_140_COMPARISON_2026-09-22.md)。
+
+原始4K输入+实时1080 NR、不加SR：1.4.0/current约240 SDK计数/s；
+本轮1.4.3因两次抑制事件约229/s。1080->4K Video SR+实时NR：
+1.4.0约59.24源+32.93生成/s，1.4.3约58.58+36.18，current约39.33+88.49。
+旧版反复停补帧；新版多生成但源连续性下降，不能只看总帧率宣称改善。
+三版NR/XeSS/XeLL文件哈希一致。未测物理扫描输出/肉眼画质；旧版无新版trace，
+不编造间隔P95/P99，也不扩展为DLSS或实卡结论。
+
+产物在 `E:/项目/Veyra/tests/fg-140-compare-actual-fullscreen-20260922/`，
+探索记录在 `fg-140-compare-20260922/`、`fg-140-compare-fullscreen-20260922/`；
+临时目录为 `E:/项目/Veyra/tmp/fg-140-compare-20260922/` 及误测对应目录。
+仅新增对照文档及本记录，无产品/测试脚本修改，无构建、打包、推送或发布。
+
 ## 2026-09-22 有界修复收尾与本地存档
 
 开工 `7724ea8` 后保留两个独立修复：`f718c02` HDR 查询结果按显示器隔离，
