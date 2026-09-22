@@ -1120,16 +1120,29 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 // re-converged several times a second - visible as flicker at
                 // exactly the drop rate. A gap this small is just a briefly
                 // lower frame rate; it is not new content.
+                // Capture drops land here too. Drop means the mailbox discarded
+                // stale frames because WE were slow; the content is continuous
+                // and the next frame is simply further along - the same
+                // situation as a preview skip. It is already excluded from
+                // hardFrameReset above and from the presentation reset policy,
+                // but it still reached temporalBreak below, so every capture
+                // drop reset NR and handed the XeSS/FSR provider reset=1. That
+                // re-warm at the capture drop rate is the flicker reported for
+                // live capture (2026-09-22). Real breaks still arrive as Seek,
+                // Cut, Discontinuity, Resize, PauseResume or DeviceLost.
                 constexpr double kRetainHistoryGapMs=250.0;
-                const double skipGapMs=previewSkipSinceProcess&&std::isfinite(lastProcessedPtsMs)?pts-lastProcessedPtsMs:0.0;
-                const bool boundedSkip=previewSkipSinceProcess&&!skipAlwaysResets&&
+                const auto flagsWithoutDrop=pkt.flags&~static_cast<pipeline::FrameFlags>(pipeline::FrameFlagBits::Drop);
+                const bool captureDropped=pipeline::hasFrameFlag(pkt.flags,pipeline::FrameFlagBits::Drop);
+                const bool gapCandidate=previewSkipSinceProcess||captureDropped;
+                const double skipGapMs=gapCandidate&&std::isfinite(lastProcessedPtsMs)?pts-lastProcessedPtsMs:0.0;
+                const bool boundedSkip=gapCandidate&&!skipAlwaysResets&&
                     std::isfinite(lastProcessedPtsMs)&&skipGapMs>0&&skipGapMs<=kRetainHistoryGapMs&&
-                    !pipeline::breaksHistory(pkt.flags);
+                    !pipeline::breaksHistory(flagsWithoutDrop);
                 if(boundedSkip){++previewSkipRetained;
                     if(host100ns()>=nextPreviewSkipLog){nextPreviewSkipLog=host100ns()+10000000;
                         veyra::log::info("preview-skip",std::format("retained history across a {:.1f} ms gap source={} retainedTotal={} skippedTotal={} (bounded skip; no NR/FG/XeSS reset)",skipGapMs,pkt.sequence,previewSkipRetained,previewSkippedTotal));}
                 }
-                const bool temporalBreak=pipeline::breaksHistory(pkt.flags)||(previewSkipSinceProcess&&!boundedSkip);
+                const bool temporalBreak=pipeline::breaksHistory(flagsWithoutDrop)||(gapCandidate&&!boundedSkip);
                 const bool previewOnlyReset=!hardFrameReset&&temporalBreak;
                 if(hardFrameReset)++metricsWindowEpoch;
                 const bool historyReset=hardFrameReset||temporalBreak;
