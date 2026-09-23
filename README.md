@@ -129,24 +129,7 @@ NR 与 DLSS 帧生成属于 **community experimental / 社区实验集成**，�
 
 Veyra 原有源码采用 [GPLv3](LICENSE)；含串流的组合程序同时适用 [AGPLv3 与上游 OpenSSL 例外](licenses/remoteplay/CHIAKI_AGPL3_OPENSSL.txt)。应用源码对应版本标签，Release 另附串流依赖与 FFmpeg 对应源码包，普通用户无需下载。SDK、模型和运行时不进入源码仓库；Release 组件按各自许可与实验发布范围单独提供。
 
-## HDR 与 5.1
 
-<p align="center"><img src="docs/images/1.4.2/rtx-video-hdr-comparison.jpg" alt="用户提供 RTX Video HDR 关闭与开启对比" width="720"></p>
-<p align="center"><small>用户拍摄对比：上图关闭，下图开启。照片仅展示该设备下的观感，不是原始 HDR 像素或显示器亮度测量。</small></p>
-
-保留原生 HDR 能力，1.4.2 新增 SDR 转 RTX Video HDR。真实 HDR 屏、5.1 扬声器和不同采集卡仍须逐台验收。1.4.0 起采集 Dolby/DTS 可解码到 PCM，不等于压缩码流直通。
-
-RTX Video HDR 开关在专业模式的增强设置，可调整对比度、饱和度、中间灰和峰值亮度。HDR 预览需要 HDR 显示器并开启 Windows HDR；SDR 屏保持 SDR，HDR 导出不要求 HDR 屏。这是视频版技术，不是游戏 RTX HDR。
-
-帧同步位于专业模式 → 运动，默认关闭，可选低排队、均匀呈现、NVIDIA Reflex（实验）。补帧开启时 Reflex 回退低排队，XeSS 保持自身调度。它控制排队和呈现节奏，不提高 GPU 算力。[实测与边界](docs/FRAME_PACING_ACCEPTANCE_2026-09-18.md)。
-
-- **HDR 输入 / 增强**：文件、P010/P016 采集与 PS5 HDR；支持明确标记的 BT.2020 NCL / PQ 或 HLG。Windows HDR 开启时，可组合 NR、DLSS SR / RTX Video SR、DLSS / XeSS 补帧。NR / Video SR 使用 SDR 代理和 HDR 基底合成，压缩高光和近黑区域的增强会衰减；不把 SDR 结果逆造为原始 HDR。HLG 使用 1000nit / gamma 1.2 参考转换。
-- **SDR 显示开关**：采集卡面板的“转为 SDR 显示”默认关闭，控制所有实时预览。打开后将 HDR 映射为 SDR，增强照常可用；播放中切换无需重连，可能短暂停顿。关闭后跟随显示器 HDR 状态。截图跟随当前画面，视频导出保持原有 HDR 规则。
-- **采集颜色**：默认使用设备元数据。设备漏报时，在采集面板选择手动 PQ 或 HLG，且必须选择 P010/P016。10bit 本身不代表 HDR；RGB / YUY2 HDR 及 BT.2020 constant-luminance 暂不支持。
-- **HDR 导出 / 截图**：视频选择 HEVC，输出 Main10 / BT.2020 / PQ；HLG 也统一输出 PQ。支持 NR、超分和内部 DLSS 补帧。XeSS 仍只支持预览；H.264 不承载此 HDR 导出。截图为 FP16 scRGB JPEG XR。导出不虚构或沿用处理前的峰值元数据；普通 PNG/JPEG 保持 SDR。
-- **5.1 音频**：文件解码与采集 PCM 保留声道位置，共用一套音频时钟、补偿和音量处理。采集优先尝试设备真实提供的多声道模式。Windows 输出设备须配置成 5.1；仅支持立体声时明确降混，在详细状态中显示输入 / 输出声道数。PS5 保持上游提供的立体声，不伪装成 5.1；本轮不提供 Dolby/DTS 压缩码流直通或 Atmos 对象音频。
-
-本机 RTX 5070 已验证 GPU 输出、HDR 文件导出及多声道软件数据；真实 HDR 屏观感、5.1 扬声器定位和各采集卡仍需实机验收。各组合记录及边界见 [施工记录](docs/HDR_MULTICHANNEL_EXECUTION_2026-09-14.md)。新安装默认仍关闭全部效果。
 
 ## 致谢
 
